@@ -3,86 +3,12 @@ import pandas as pd
 from openpyxl import load_workbook
 from datetime import datetime
 import math
-import configparser
 import sys
 import csv
-
-"""
-
-Add Billcode In for to Transformations
-- TextBox 180:TextBox171
-If TextBox 180 blank then use only TextBox171
-Look at the 15s/30s conversion round fx
-Agency function to go to agency non-agency trade
-
-Keyword arguments:
-argument -- description
-Return: return_description
-"""
+import json
+from config_manager import config_manager
 
 
-
-def load_config():
-    """Load configuration from config.ini file."""
-    config = configparser.ConfigParser()
-    # Preserve case sensitivity of keys
-    config.optionxform = str
-    
-    # Get the directory of the current script
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(script_dir, 'config.ini')
-    
-    # Check if config file exists
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f"Config file not found at: {config_path}")
-    
-    # Read the config file
-    files_read = config.read(config_path)
-    if not files_read:
-        raise ValueError(f"Could not read config file at: {config_path}")
-    
-    try:
-        # Load paths
-        TEMPLATE_PATH = config['Paths']['template_path']
-        INPUT_DIR = config['Paths']['input_dir']
-        OUTPUT_DIR = config['Paths']['output_dir']
-        
-        # Convert relative paths to absolute paths based on script location
-        TEMPLATE_PATH = os.path.join(script_dir, TEMPLATE_PATH)
-        INPUT_DIR = os.path.join(script_dir, INPUT_DIR)
-        OUTPUT_DIR = os.path.join(script_dir, OUTPUT_DIR)
-        
-        # Create directories if they don't exist
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        os.makedirs(os.path.dirname(TEMPLATE_PATH), exist_ok=True)
-        os.makedirs(INPUT_DIR, exist_ok=True)
-        
-        # Load market replacements
-        MARKET_REPLACEMENTS = dict(config['Markets'])
-        
-        # Load and parse final columns, handling the '#' character
-        FINAL_COLUMNS = config['Columns']['final_columns'].split(',')
-        # Replace the placeholder with actual '#' if needed
-        FINAL_COLUMNS = [col.strip() if col.strip() != 'Number' else '#' for col in FINAL_COLUMNS]
-        
-        return TEMPLATE_PATH, INPUT_DIR, OUTPUT_DIR, MARKET_REPLACEMENTS, FINAL_COLUMNS
-        
-    except KeyError as e:
-        print(f"Error: Missing section or key in config file: {e}")
-        print("Please ensure your config.ini file contains all required sections and keys:")
-        print("Required sections: [Paths], [Markets], [Columns]")
-        print("Required keys in [Paths]: template_path, input_dir, output_dir")
-        sys.exit(1)
-    except Exception as e:
-        print(f"Error loading configuration: {e}")
-        sys.exit(1)
-
-try:
-    # Load configuration at module level
-    TEMPLATE_PATH, INPUT_DIR, OUTPUT_DIR, MARKET_REPLACEMENTS, FINAL_COLUMNS = load_config()
-except Exception as e:
-    print(f"Failed to load configuration: {e}")
-    sys.exit(1)
 
 def print_header():
     """Display a welcome header with basic instructions."""
@@ -119,9 +45,9 @@ def select_processing_mode():
 
 def list_files():
     """List all available files in the input directory."""
-    files = [f for f in os.listdir(INPUT_DIR) if f.endswith('.csv')]
+    files = [f for f in os.listdir(config_manager.get_config().paths.input_dir) if f.endswith('.csv')]
     if not files:
-        print("\n❌ No CSV files found in the input directory:", INPUT_DIR)
+        print("\n❌ No CSV files found in the input directory:", config_manager.get_config().paths.input_dir)
         print("Please add your CSV files to this directory and try again.")
         sys.exit(1)
     return files
@@ -160,7 +86,7 @@ def select_input_file(files):
             if 1 <= choice <= len(files):
                 selected_file = files[choice - 1]
                 print(f"\n✅ Selected: {selected_file}")
-                return os.path.join(INPUT_DIR, selected_file)
+                return os.path.join(config_manager.get_config().paths.input_dir, selected_file)
             else:
                 print(f"❌ Please enter a number between 1 and {len(files)}")
         except ValueError:
@@ -255,8 +181,10 @@ def apply_transformations(df, text_box_180, text_box_171):
         billcode = generate_billcode(text_box_180, text_box_171)
         df['Bill Code'] = billcode
         
-        # Rest of transformations remain the same
-        df['Market'] = df['Market'].replace(MARKET_REPLACEMENTS)
+        # Update market replacements to use config
+        df['Market'] = df['Market'].replace(config_manager.get_config().market_replacements)
+        
+        # Rest of transformations
         df['Gross Rate'] = df['Gross Rate'].astype(str).str.replace('$', '').str.replace(',', '')
         df['Gross Rate'] = pd.to_numeric(df['Gross Rate'], errors='coerce').fillna(0).map("${:,.2f}".format)
         df['Length'] = df['Length'].apply(round_to_nearest_30_seconds)
@@ -276,13 +204,8 @@ def prompt_for_user_inputs():
     print("Additional Information Needed".center(80))
     print("-"*80)
     
-    # Load sales people from config
-    config = configparser.ConfigParser()
-    config.optionxform = str
-    config.read('config.ini')
-    sales_people = config['Sales']['sales_people'].split(',')
-    
     # Get Sales Person
+    sales_people = config_manager.get_config().sales_people
     print("\n1. Sales Person:")
     for idx, person in enumerate(sales_people, 1):
         print(f"   [{idx}] {person}")
@@ -362,12 +285,12 @@ def apply_user_inputs(df, billing_type, revenue_type, agency_flag, sales_person)
     df['Sales Person'] = sales_person
 
     print("🔄 Ensuring all required columns exist...")
-    for col in FINAL_COLUMNS:
+    for col in config_manager.get_config().final_columns:
         if col not in df.columns:
             df[col] = None
     
     print("🔄 Reordering columns...")
-    df = df[FINAL_COLUMNS]
+    df = df[config_manager.get_config().final_columns]
     
     print("✅ User inputs applied successfully!")
     return df
@@ -379,12 +302,12 @@ def save_to_excel(df, template_path, output_path):
         sheet = workbook.active
         
         # Write headers and data
-        for col_num, column_title in enumerate(FINAL_COLUMNS, 1):
+        for col_num, column_title in enumerate(config_manager.get_config().final_columns, 1):
             sheet.cell(row=1, column=col_num, value=column_title)
 
         for row_num, row_data in enumerate(df.values, 2):
             for col_num, cell_value in enumerate(row_data, 1):
-                column_name = FINAL_COLUMNS[col_num - 1]
+                column_name = config_manager.get_config().final_columns[col_num - 1]
                 cell = sheet.cell(row=row_num, column=col_num, value=cell_value)
                 
                 if column_name == '#':
@@ -438,26 +361,147 @@ def display_processing_summary(summary):
         print("-" * 80)
         
         print(f"\nOverall Statistics:")
-        print(f"Total Spots Processed: {summary['total_spots']:,}")
-        print(f"Total Gross Value: ${summary['total_gross_value']:,.2f}")
-        print(f"Average Spot Length: {summary['avg_spot_length']}")
-        print(f"Date Range: {summary['date_range']['earliest']} to {summary['date_range']['latest']}")
-        print(f"Unique Programs: {summary['programs']}")
+        print(f"Total Spots Processed: {summary['overall_metrics']['total_spots']:,}")
+        print(f"Total Gross Value: ${summary['overall_metrics']['total_gross_value']:,.2f}")
+        print(f"Average Spot Value: ${summary['overall_metrics']['average_spot_value']:,.2f}")
+        print(f"Unique Programs: {summary['overall_metrics']['unique_programs']}")
+        
+        print(f"\nDate Range: {summary['date_range']['earliest']} to {summary['date_range']['latest']}")
+        print(f"Total Days: {summary['date_range']['total_days']}")
+        
+        print(f"\nLength Statistics:")
+        print(f"Average Length: {summary['length_statistics']['average_length']}")
+        print(f"Min Length: {summary['length_statistics']['min_length']}")
+        print(f"Max Length: {summary['length_statistics']['max_length']}")
         
         print(f"\nMarket Breakdown:")
-        for market, count in summary['markets_breakdown'].items():
+        for market, count in summary['breakdowns']['markets'].items():
             print(f"  {market}: {count:,} spots")
         
         print(f"\nMedia Type Breakdown:")
-        for media, count in summary['media_breakdown'].items():
+        for media, count in summary['breakdowns']['media_types'].items():
             print(f"  {media}: {count:,} spots")
+            
+        print(f"\nSpots by Day:")
+        for day, count in summary['breakdowns']['spots_by_day'].items():
+            print(f"  {day}: {count:,} spots")
             
     except Exception as e:
         print(f"Error displaying summary: {str(e)}")
         raise
 
+def generate_enhanced_processing_summary(df, input_file, output_file, user_inputs):
+    """
+    Generate an enhanced summary of the file processing including metadata.
+    
+    Args:
+        df (pandas.DataFrame): The processed dataframe
+        input_file (str): Path to input file
+        output_file (str): Path to output file
+        user_inputs (dict): Dictionary containing user inputs used for processing
+    
+    Returns:
+        dict: Enhanced summary dictionary
+    """
+    # Convert date column to datetime
+    df['Air Date'] = pd.to_datetime(df['Air Date'])
+    
+    # Convert Gross Rate to numeric for calculations
+    gross_values = df['Gross Rate'].str.replace('$', '').str.replace(',', '').astype(float)
+    
+    # Calculate spots by day of week
+    df['Day_of_Week'] = df['Air Date'].dt.day_name()
+    spots_by_day = df['Day_of_Week'].value_counts().to_dict()
+    
+    summary = {
+        "processing_info": {
+            "timestamp": datetime.now().isoformat(),
+            "input_file": input_file,
+            "output_file": output_file,
+            "user_inputs": user_inputs
+        },
+        "overall_metrics": {
+            "total_spots": len(df),
+            "total_gross_value": float(gross_values.sum()),  # Convert to float for JSON serialization
+            "average_spot_value": float(gross_values.mean()),
+            "unique_programs": len(df['Program'].unique()),
+        },
+        "date_range": {
+            "earliest": df['Air Date'].min().isoformat(),
+            "latest": df['Air Date'].max().isoformat(),
+            "total_days": (df['Air Date'].max() - df['Air Date'].min()).days + 1
+        },
+        "breakdowns": {
+            "markets": df['Market'].value_counts().to_dict(),
+            "media_types": df['Media'].value_counts().to_dict(),
+            "spots_by_day": spots_by_day,
+            "programs": df['Program'].value_counts().to_dict()
+        },
+        "length_statistics": {
+            "average_length": str(pd.to_timedelta(df['Length']).mean()),
+            "min_length": str(pd.to_timedelta(df['Length']).min()),
+            "max_length": str(pd.to_timedelta(df['Length']).max())
+        }
+    }
+    
+    return summary
+
+def save_processing_summary(summary, filename_base):
+    """
+    Save processing summary in multiple formats.
+    
+    Args:
+        summary (dict): The processing summary dictionary
+        filename_base (str): Base filename to use for saving
+    
+    Returns:
+        tuple: Paths to saved summary files
+    """
+    # Create summaries directory if it doesn't exist
+    summary_dir = os.path.join(config_manager.get_config().paths.output_dir, 'summaries')
+    os.makedirs(summary_dir, exist_ok=True)
+    
+    # Create timestamp-based subdirectory
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    summary_subdir = os.path.join(summary_dir, f"{filename_base}_{timestamp}")
+    os.makedirs(summary_subdir, exist_ok=True)
+    
+    # Save JSON version
+    json_path = os.path.join(summary_subdir, "summary.json")
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(summary, f, indent=2, ensure_ascii=False)
+    
+    # Create flattened version for CSV
+    flat_summary = {
+        "Timestamp": summary["processing_info"]["timestamp"],
+        "Input File": summary["processing_info"]["input_file"],
+        "Output File": summary["processing_info"]["output_file"],
+        "Total Spots": summary["overall_metrics"]["total_spots"],
+        "Total Gross Value": summary["overall_metrics"]["total_gross_value"],
+        "Average Spot Value": summary["overall_metrics"]["average_spot_value"],
+        "Unique Programs": summary["overall_metrics"]["unique_programs"],
+        "Start Date": summary["date_range"]["earliest"],
+        "End Date": summary["date_range"]["latest"],
+        "Total Days": summary["date_range"]["total_days"],
+        "Average Length": summary["length_statistics"]["average_length"],
+        "Billing Type": summary["processing_info"]["user_inputs"]["billing_type"],
+        "Revenue Type": summary["processing_info"]["user_inputs"]["revenue_type"],
+        "Agency Type": summary["processing_info"]["user_inputs"]["agency_flag"],
+        "Sales Person": summary["processing_info"]["user_inputs"]["sales_person"]
+    }
+    
+    # Save CSV version
+    csv_path = os.path.join(summary_subdir, "summary.csv")
+    pd.DataFrame([flat_summary]).to_csv(csv_path, index=False)
+    
+    print(f"\n✅ Summary files saved:")
+    print(f"   - JSON: {json_path}")
+    print(f"   - CSV: {csv_path}")
+    
+    return json_path, csv_path
+
 def process_file(file_path):
-    """Process a single input file and display processing statistics."""
+    """Process a single input file and save processing statistics."""
     print("\n" + "-"*80)
     print(f"Processing: {os.path.basename(file_path)}".center(80))
     print("-"*80)
@@ -481,22 +525,41 @@ def process_file(file_path):
     # Prompt for additional user inputs
     billing_type, revenue_type, agency_flag, sales_person = prompt_for_user_inputs()
     
+    # Create user inputs dictionary for summary
+    user_inputs = {
+        "billing_type": billing_type,
+        "revenue_type": revenue_type,
+        "agency_flag": agency_flag,
+        "sales_person": sales_person
+    }
+    
     print("\n🔄 Applying user inputs and reordering columns...")
     df = apply_user_inputs(df, billing_type, revenue_type, agency_flag, sales_person)
     print("✅ User inputs applied!")
 
-    # Generate and display summary
-    summary = generate_processing_summary(df)
-    display_processing_summary(summary)
-
-    # Define output file name and save the result
+    # Define output file name
     filename_base = os.path.splitext(os.path.basename(file_path))[0]
     timestamp = datetime.now().strftime("%Y-%m-%d")
-    output_file = os.path.join(OUTPUT_DIR, f"{filename_base}_Processed_{timestamp}.xlsx")
+    output_file = os.path.join(config_manager.get_config().paths.output_dir, 
+                              f"{filename_base}_Processed_{timestamp}.xlsx")
     
     print("\n🔄 Saving to Excel...")
-    save_to_excel(df, TEMPLATE_PATH, output_file)
+    save_to_excel(df, config_manager.get_config().paths.template_path, output_file)
     print(f"✅ File saved successfully to: {output_file}")
+
+    # Generate and save enhanced summary
+    summary = generate_enhanced_processing_summary(
+        df, 
+        file_path, 
+        output_file, 
+        user_inputs
+    )
+    
+    # Save summary files
+    json_path, csv_path = save_processing_summary(summary, filename_base)
+    
+    # Display summary
+    display_processing_summary(summary)
 
 
 def main():
@@ -510,7 +573,7 @@ def main():
         if choice == 'A':
             print("\n🔄 Processing all files automatically...")
             for file in files:
-                file_path = os.path.join(INPUT_DIR, file)
+                file_path = os.path.join(config_manager.get_config().paths.input_dir, file)  # <- Fixed here
                 process_file(file_path)
                 print("\n" + "="*80)
             print("\n✅ All files processed successfully!")
