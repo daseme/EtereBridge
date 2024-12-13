@@ -1,20 +1,21 @@
 {
   "processing_info": {
-    "timestamp": "2024-11-14T13:45:09.260778",
-    "input_file": "/mnt/c/Users/Kurt/windev/EtereBridge/./input/monthly_files/NYDOH 2320.csv",
-    "output_file": "/mnt/c/Users/Kurt/windev/EtereBridge/./output/NYDOH 2320_Processed_2024-11-14.xlsx",
+    "timestamp": "2024-12-13T12:35:21.555603",
+    "input_file": "C:\\Users\\Kurt\\windev\\CTV-EtereBridge\\./input/monthly_files\\NYDOH 2320.csv",
+    "output_file": "C:\\Users\\Kurt\\windev\\CTV-EtereBridge\\./output\\NYDOH 2320_Processed_2024-12-13.xlsx",
     "user_inputs": {
       "billing_type": "Calendar",
       "revenue_type": "Internal Ad Sales",
       "agency_flag": "Agency",
-      "sales_person": "Charmaine Lane"
+      "sales_person": "Charmaine Lane",
+      "agency_fee": 0.08
     }
   },
   "overall_metrics": {
-    "total_spots": 150,
-    "total_gross_value": 10000.0,
-    "average_spot_value": 66.66666666666667,
-    "unique_programs": 75
+    "total_spots": 149,
+    "total_gross_value": 5000.0,
+    "average_spot_value": 33.557046979865774,
+    "unique_programs": 74
   },
   "date_range": {
     "earliest": "2024-11-11T00:00:00",
@@ -120,8 +121,8 @@
     }
   },
   "length_statistics": {
-    "average_length": "0 days 00:00:25",
-    "min_length": "0 days 00:00:00",
+    "average_length": "0 days 00:00:25.167785234",
+    "min_length": "0 days 00:00:15",
     "max_length": "0 days 00:00:30"
   }
 }

@@ -1,2 +1,0 @@
-Timestamp,Input File,Output File,Total Spots,Total Gross Value,Average Spot Value,Unique Programs,Start Date,End Date,Total Days,Average Length,Billing Type,Revenue Type,Agency Type,Sales Person
-2024-11-14T13:45:17.686800,/mnt/c/Users/Kurt/windev/EtereBridge/./input/monthly_files/SCWA.csv,/mnt/c/Users/Kurt/windev/EtereBridge/./output/SCWA_Processed_2024-11-14.xlsx,230,10000.0,43.47826086956522,128,2024-11-14T00:00:00,2024-12-31T00:00:00,48,0 days 00:00:25.043478260,Calendar,Internal Ad Sales,Non-Agency,Charmaine Lane

@@ -1,0 +1,2 @@
+Timestamp,Input File,Output File,Total Spots,Total Gross Value,Average Spot Value,Unique Programs,Start Date,End Date,Total Days,Average Length,Billing Type,Revenue Type,Agency Type,Sales Person
+2024-12-13T12:34:56.410299,C:\Users\Kurt\windev\CTV-EtereBridge\./input/monthly_files\CCA SFO Chinese.csv,C:\Users\Kurt\windev\CTV-EtereBridge\./output\CCA SFO Chinese_Processed_2024-12-13.xlsx,94,7882.549999999999,83.85691489361702,57,2024-11-19T00:00:00,2025-01-31T00:00:00,74,0 days 00:00:30,Calendar,Internal Ad Sales,Agency,Charmaine Lane

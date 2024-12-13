@@ -24,6 +24,7 @@ def round_to_nearest_30_seconds(seconds):
     31 seconds will round down to 30 seconds
     45 seconds will round up to 60 seconds
     15 seconds will round to 0 seconds
+
     75 seconds will round to 90 seconds
     """
     return round(float(seconds) / 15) * 15
@@ -101,14 +102,28 @@ def clean_numeric(value):
 def load_and_clean_data(file_path):
     """Load data from the selected input file and perform initial transformations."""
     try:
+        # Read the main data, skipping the first 3 rows (header information)
         df = pd.read_csv(file_path, skiprows=3)
+        
+        # Drop completely empty rows
         df = df.dropna(how='all')
+        
+        # Filter out rows that don't have all our required columns populated
+        required_columns = ['id_contrattirighe', 'timerange2', 'dateschedule']
+        df = df[df[required_columns].notna().all(axis=1)]
+        
+        # Filter out rows containing 'Textbox' in IMPORTO2 column
         df = df[~df['IMPORTO2'].astype(str).str.contains('Textbox', na=False)]
+        
+        # Filter out rows that have 'Textbox' in their column names
+        # This will remove the summary rows that use different column structure
+        df = df[df.columns[~df.columns.str.contains('Textbox97|tot|Textbox61|Textbox53')]]
         
         # Clean numeric fields before renaming
         df['id_contrattirighe'] = df['id_contrattirighe'].apply(clean_numeric)
         df['Textbox14'] = df['Textbox14'].apply(clean_numeric)
         
+        # Rename columns
         df = df.rename(columns={
             'id_contrattirighe': 'Line',
             'Textbox14': '#',
@@ -120,15 +135,16 @@ def load_and_clean_data(file_path):
             'bookingcode2': 'Media'
         })
         
+        # Split timerange2 into Time In and Time Out
         df[['Time In', 'Time Out']] = df['timerange2'].str.split('-', expand=True)
+        
+        # Double check - remove any rows that don't match our expected data structure
+        df = df[df['Line'].notna() & df['Air Date'].notna()]
+        
         return df
         
     except Exception as e:
-        print(f"❌ Error loading or cleaning data: {e}")
-        return None
-        
-    except Exception as e:
-        print(f"❌ Error loading or cleaning data: {e}")
+        print(f"❌ Error loading or cleaning data: {str(e)}")
         return None
 
 def extract_header_values(file_path):
@@ -264,19 +280,42 @@ def prompt_for_user_inputs():
         agency_input = input("\nSelect order type (A/N/T): ").strip().upper()
         if agency_input == 'A':
             agency_flag = "Agency"
+            # Add agency fee prompt
+            print("\n5. Agency Fee Type:")
+            print("   [S] Standard (15%)")
+            print("   [C] Custom")
+            while True:
+                fee_type = input("\nSelect fee type (S/C): ").strip().upper()
+                if fee_type == 'S':
+                    agency_fee = 0.15
+                    break
+                elif fee_type == 'C':
+                    while True:
+                        try:
+                            custom_fee = float(input("\nEnter custom fee percentage (without % symbol): "))
+                            if 0 <= custom_fee <= 100:
+                                agency_fee = custom_fee / 100
+                                break
+                            print("❌ Please enter a percentage between 0 and 100")
+                        except ValueError:
+                            print("❌ Please enter a valid number")
+                    break
+                print("❌ Please enter 'S' for Standard or 'C' for Custom")
             break
         elif agency_input == 'N':
             agency_flag = "Non-Agency"
+            agency_fee = None
             break
         elif agency_input == 'T':
             agency_flag = "Trade"
+            agency_fee = None
             break
         print("❌ Please enter 'A' for Agency, 'N' for Non-Agency, or 'T' for Trade")
     
     print("\n✅ Information collected successfully!")
-    return billing_type, revenue_type, agency_flag, sales_person
+    return billing_type, revenue_type, agency_flag, sales_person, agency_fee
 
-def apply_user_inputs(df, billing_type, revenue_type, agency_flag, sales_person):
+def apply_user_inputs(df, billing_type, revenue_type, agency_flag, sales_person, agency_fee):
     """Apply user input to the appropriate columns in the DataFrame."""
     print("\n🔄 Applying user inputs to data...")
     df['Billing Type'] = billing_type
@@ -284,45 +323,88 @@ def apply_user_inputs(df, billing_type, revenue_type, agency_flag, sales_person)
     df['Agency?'] = agency_flag
     df['Sales Person'] = sales_person
 
+    # Initialize Broker Fees column as empty
+    if 'Broker Fees' not in df.columns:
+        df['Broker Fees'] = None
+
+    # Ensure all required columns exist
     print("🔄 Ensuring all required columns exist...")
     for col in config_manager.get_config().final_columns:
         if col not in df.columns:
             df[col] = None
     
+    # Reorder columns according to config
     print("🔄 Reordering columns...")
     df = df[config_manager.get_config().final_columns]
     
     print("✅ User inputs applied successfully!")
     return df
 
-def save_to_excel(df, template_path, output_path):
+def save_to_excel(df, template_path, output_path, agency_fee=0.15):  # Added agency_fee parameter
     """Save DataFrame to Excel, preserving template but removing excess rows."""
     try:
         workbook = load_workbook(template_path)
         sheet = workbook.active
         
+        # Get column indices from config
+        columns = config_manager.get_config().final_columns
+        broker_fees_idx = columns.index('Broker Fees') + 1
+        gross_rate_idx = columns.index('Gross Rate') + 1
+        agency_idx = columns.index('Agency?') + 1
+        
         # Write headers and data
-        for col_num, column_title in enumerate(config_manager.get_config().final_columns, 1):
+        for col_num, column_title in enumerate(columns, 1):
             sheet.cell(row=1, column=col_num, value=column_title)
 
         for row_num, row_data in enumerate(df.values, 2):
             for col_num, cell_value in enumerate(row_data, 1):
-                column_name = config_manager.get_config().final_columns[col_num - 1]
-                cell = sheet.cell(row=row_num, column=col_num, value=cell_value)
+                column_name = columns[col_num - 1]
+                cell = sheet.cell(row=row_num, column=col_num)
                 
-                if column_name == '#':
-                    cell.number_format = '0'
-                elif column_name == 'Length':
-                    cell.number_format = 'hh:mm:ss'
+                if column_name == 'Broker Fees':
+                    # Get agency status and gross rate for this row
+                    agency_cell = sheet.cell(row=row_num, column=agency_idx)
+                    gross_rate_cell = sheet.cell(row=row_num, column=gross_rate_idx)
+                    
+                    if agency_cell.value == 'Agency':
+                        # Get the Excel column letter for Gross Rate
+                        from openpyxl.utils import get_column_letter
+                        gross_rate_col_letter = get_column_letter(gross_rate_idx)
+                        # Set formula using the provided agency fee percentage
+                        cell.value = f'={gross_rate_col_letter}{row_num}*{agency_fee}'
+                        cell.number_format = '$#,##0.00'
+                    else:
+                        cell.value = None
+                
                 elif column_name == 'Gross Rate':
-                    cell.number_format = '$#,##0.00'
+                    if cell_value and str(cell_value).strip():
+                        # Remove $ and , from the value
+                        clean_value = str(cell_value).replace('$', '').replace(',', '')
+                        try:
+                            cell.value = float(clean_value)
+                            cell.number_format = '$#,##0.00'
+                        except ValueError:
+                            cell.value = cell_value
+                
+                elif column_name in ['Spot Value', 'Station Net']:
+                    if cell_value and str(cell_value).strip():
+                        clean_value = str(cell_value).replace('$', '').replace(',', '')
+                        try:
+                            cell.value = float(clean_value)
+                            cell.number_format = '$#,##0.00'
+                        except ValueError:
+                            cell.value = cell_value
+                
+                else:
+                    cell.value = cell_value
         
-        # Remove excess rows while preserving formulas in other columns
-        last_data_row = len(df) + 1  # +1 for header row
+        # Remove excess rows while preserving formulas
+        last_data_row = len(df) + 1
         if sheet.max_row > last_data_row:
             sheet.delete_rows(last_data_row + 1, sheet.max_row - last_data_row)
         
         workbook.save(output_path)
+        print("✅ Excel file saved with Broker Fees calculations")
         
     except Exception as e:
         print(f"\n❌ Error saving to Excel: {str(e)}")
@@ -523,18 +605,19 @@ def process_file(file_path):
     print("✅ Transformations complete!")
 
     # Prompt for additional user inputs
-    billing_type, revenue_type, agency_flag, sales_person = prompt_for_user_inputs()
+    billing_type, revenue_type, agency_flag, sales_person, agency_fee = prompt_for_user_inputs()
     
     # Create user inputs dictionary for summary
     user_inputs = {
         "billing_type": billing_type,
         "revenue_type": revenue_type,
         "agency_flag": agency_flag,
-        "sales_person": sales_person
+        "sales_person": sales_person,
+        "agency_fee": agency_fee if agency_fee is not None else "N/A"
     }
     
     print("\n🔄 Applying user inputs and reordering columns...")
-    df = apply_user_inputs(df, billing_type, revenue_type, agency_flag, sales_person)
+    df = apply_user_inputs(df, billing_type, revenue_type, agency_flag, sales_person, agency_fee)
     print("✅ User inputs applied!")
 
     # Define output file name
@@ -544,7 +627,7 @@ def process_file(file_path):
                               f"{filename_base}_Processed_{timestamp}.xlsx")
     
     print("\n🔄 Saving to Excel...")
-    save_to_excel(df, config_manager.get_config().paths.template_path, output_file)
+    save_to_excel(df, config_manager.get_config().paths.template_path, output_file, agency_fee)  # Pass agency_fee here
     print(f"✅ File saved successfully to: {output_file}")
 
     # Generate and save enhanced summary

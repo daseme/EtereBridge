@@ -1,20 +1,21 @@
 {
   "processing_info": {
-    "timestamp": "2024-11-14T13:44:44.937835",
-    "input_file": "/mnt/c/Users/Kurt/windev/EtereBridge/./input/monthly_files/CCA SFO Chinese.csv",
-    "output_file": "/mnt/c/Users/Kurt/windev/EtereBridge/./output/CCA SFO Chinese_Processed_2024-11-14.xlsx",
+    "timestamp": "2024-12-13T12:34:56.410299",
+    "input_file": "C:\\Users\\Kurt\\windev\\CTV-EtereBridge\\./input/monthly_files\\CCA SFO Chinese.csv",
+    "output_file": "C:\\Users\\Kurt\\windev\\CTV-EtereBridge\\./output\\CCA SFO Chinese_Processed_2024-12-13.xlsx",
     "user_inputs": {
-      "billing_type": "Broadcast",
+      "billing_type": "Calendar",
       "revenue_type": "Internal Ad Sales",
       "agency_flag": "Agency",
-      "sales_person": "Charmaine Lane"
+      "sales_person": "Charmaine Lane",
+      "agency_fee": 0.15
     }
   },
   "overall_metrics": {
-    "total_spots": 95,
-    "total_gross_value": 15765.55,
-    "average_spot_value": 165.95315789473685,
-    "unique_programs": 58
+    "total_spots": 94,
+    "total_gross_value": 7882.549999999999,
+    "average_spot_value": 83.85691489361702,
+    "unique_programs": 57
   },
   "date_range": {
     "earliest": "2024-11-19T00:00:00",
@@ -105,8 +106,8 @@
     }
   },
   "length_statistics": {
-    "average_length": "0 days 00:00:29.684210526",
-    "min_length": "0 days 00:00:00",
+    "average_length": "0 days 00:00:30",
+    "min_length": "0 days 00:00:30",
     "max_length": "0 days 00:00:30"
   }
 }
