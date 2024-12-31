@@ -10,6 +10,9 @@ env/
 # Output files
 output/
 
+# Input files
+input/**
+
 # Configuration
 config.ini
 

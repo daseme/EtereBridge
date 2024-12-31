@@ -453,70 +453,81 @@ Log File: {log_file}
             logging.error(f"Error saving output file: {e}")
             raise
 
+
     def save_to_excel(self, df: pd.DataFrame, template_path: str, 
                     output_path: str, agency_fee: Optional[float] = 0.15):
-        """Save DataFrame to Excel, preserving template and handling formulas."""
+        """Save DataFrame to Excel while preserving template formulas."""
         try:
             logging.info(f"Loading template from: {template_path}")
-            workbook = load_workbook(template_path)
+            workbook = load_workbook(template_path, data_only=False)
             sheet = workbook.active
             
             # Get column indices from config
             columns = self.config.final_columns
-            broker_fees_idx = columns.index('Broker Fees') + 1 if 'Broker Fees' in columns else None
-            gross_rate_idx = columns.index('Gross Rate') + 1 if 'Gross Rate' in columns else None
-            agency_idx = columns.index('Agency?') + 1 if 'Agency?' in columns else None
+            
+            # Fix 2: Pre-calculate frequently used indices
+            market_col = len(columns)  # Market is last column
+            gross_rate_col = columns.index('Gross Rate') + 1
+            agency_col = columns.index('Agency?') + 1
+            
+            # Define special columns
+            formula_columns = {3, 4, 19}  # C, D, S
+            broker_fees_col = 20  # T
+            
+            # Store original formulas from template
+            template_formulas = {}
+            for col in formula_columns:
+                template_formulas[col] = sheet.cell(row=2, column=col).value if sheet.cell(row=2, column=col).value else None
             
             # Write headers
             for col_num, column_title in enumerate(columns, 1):
                 sheet.cell(row=1, column=col_num, value=column_title)
 
-            # Write data with enhanced error handling
+            # Write data while preserving formulas
             for row_num, row_data in enumerate(df.values, 2):
                 for col_num, cell_value in enumerate(row_data, 1):
-                    try:
-                        column_name = columns[col_num - 1]
-                        cell = sheet.cell(row=row_num, column=col_num)
-                        
-                        if (column_name == 'Broker Fees' and broker_fees_idx and 
-                            agency_idx and gross_rate_idx):
-                            agency_cell = sheet.cell(row=row_num, column=agency_idx)
-                            if agency_cell.value == 'Agency' and agency_fee is not None:
-                                from openpyxl.utils import get_column_letter
-                                gross_rate_col = get_column_letter(gross_rate_idx)
-                                cell.value = f'={gross_rate_col}{row_num}*{agency_fee}'
-                                cell.number_format = '$#,##0.00'
+                    cell = sheet.cell(row=row_num, column=col_num)
+                    
+                    # Handle special columns in clear order
+                    if col_num in formula_columns:
+                        if template_formulas[col_num]:
+                            cell.value = template_formulas[col_num]
+                    elif col_num == broker_fees_col and agency_fee is not None:
+                        if row_data[agency_col - 1] == 'Agency':
+                            from openpyxl.utils import get_column_letter
+                            cell.value = f'={get_column_letter(gross_rate_col)}{row_num}*{agency_fee}'
+                            cell.number_format = '$#,##0.00'
+                    elif col_num == market_col:
+                        market_value = str(cell_value) if cell_value else ""
+                        cell.value = self.config.market_replacements.get(market_value, market_value)
+                    else:
+                        try:
+                            column_name = columns[col_num - 1]
+                            if column_name in ['Gross Rate', 'Spot Value', 'Station Net']:
+                                if cell_value and str(cell_value).strip():
+                                    clean_value = str(cell_value).replace('$', '').replace(',', '')
+                                    try:
+                                        cell.value = float(clean_value)
+                                        cell.number_format = '$#,##0.00'
+                                    except ValueError:
+                                        logging.warning(f"Could not convert {cell_value} to float")
+                                        cell.value = cell_value
                             else:
-                                cell.value = None
-                        
-                        elif column_name in ['Gross Rate', 'Spot Value', 'Station Net']:
-                            if cell_value and str(cell_value).strip():
-                                clean_value = str(cell_value).replace('$', '').replace(',', '')
-                                try:
-                                    cell.value = float(clean_value)
-                                    cell.number_format = '$#,##0.00'
-                                except ValueError:
-                                    logging.warning(f"Could not convert {cell_value} to float for {column_name}")
-                                    cell.value = cell_value
-                        
-                        else:
+                                cell.value = cell_value
+                        except Exception as e:
+                            logging.error(f"Error writing cell at row {row_num}, col {col_num}: {e}")
                             cell.value = cell_value
-
-                    except Exception as e:
-                        logging.error(f"Error writing cell at row {row_num}, col {col_num}: {e}")
-                        cell.value = cell_value  # Fall back to direct value assignment
 
             # Remove excess rows while preserving formulas
             last_data_row = len(df) + 1
             if sheet.max_row > last_data_row:
                 sheet.delete_rows(last_data_row + 1, sheet.max_row - last_data_row)
             
-            # Create output directory if it doesn't exist
+            # Ensure output directory exists
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             
-            # Save workbook
             workbook.save(output_path)
-            logging.info("Excel file saved successfully with formulas")
+            logging.info("Excel file saved successfully with formulas preserved")
             
         except Exception as e:
             logging.error(f"Error saving to Excel: {str(e)}")
@@ -572,7 +583,7 @@ Log File: {log_file}
             logging.error(f"Error generating summary: {e}")
             raise
 
-    def process_file(self, file_path: str) -> ProcessingResult:
+    def process_file(self, file_path: str, user_inputs: Optional[Dict] = None) -> ProcessingResult:
         """Process a single input file with enhanced error handling."""
         filename = os.path.basename(file_path)
         logging.info(f"###### Starting processing of {filename} ######")
@@ -590,9 +601,10 @@ Log File: {log_file}
             logging.info("Applying transformations...")
             df = self.apply_transformations(df, text_box_180, text_box_171)
             
-            # Get user inputs
-            logging.info("Collecting user inputs...")
-            user_inputs = self.prompt_for_user_inputs()
+            # Get user inputs if not provided
+            if user_inputs is None:
+                logging.info("Collecting user inputs...")
+                user_inputs = self.prompt_for_user_inputs()
             
             # Apply user inputs
             logging.info("Applying user inputs...")
@@ -626,10 +638,27 @@ Log File: {log_file}
         successful = []
         failed = []
         
+        # Ask if all files share the same user inputs
+        print("\n" + "-"*80)
+        print("Batch Processing Setup".center(80))
+        print("-"*80)
+        shared_inputs = input("\nDo all files in this batch share the same user inputs? (Y/N): ").strip().lower()
+        
+        user_inputs = None
+        if shared_inputs == 'y':
+            print("\nCollecting user inputs for the entire batch...")
+            user_inputs = self.prompt_for_user_inputs()
+        
         files_iter = tqdm(files, desc="Processing files") if show_progress else files
         
         for file_path in files_iter:
-            result = self.process_file(file_path)
+            if shared_inputs == 'y':
+                # Use the collected user inputs for all files
+                result = self.process_file(file_path, user_inputs)
+            else:
+                # Prompt for user inputs for each file
+                result = self.process_file(file_path)
+            
             if result.success:
                 successful.append(result)
             else:
