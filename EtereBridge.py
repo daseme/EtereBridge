@@ -1,17 +1,17 @@
 import os
-import pandas as pd
-from openpyxl import load_workbook
-from datetime import datetime
-import math
 import sys
-import csv
-import json
 import logging
+import csv
+import pandas as pd
+from datetime import datetime
 from pathlib import Path
+from openpyxl import load_workbook  # Add this import
+import json  # Add this import
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from tqdm import tqdm
 from config_manager import config_manager
+from file_processor import FileProcessor
 
 @dataclass
 class ProcessingResult:
@@ -35,6 +35,9 @@ class EtereBridge:
         self.config = config_manager.get_config()
         self.log_file = config_manager.setup_logging()
         self.results: List[ProcessingResult] = []
+        
+        # Initialize FileProcessor
+        self.file_processor = FileProcessor(self.config)
         
     def print_header(self):
         """Display a welcome header with basic instructions."""
@@ -134,85 +137,6 @@ Log File: {log_file}
             logging.error(f"Error reading header: {e}")
             return '', ''
 
-    def clean_numeric(self, value):
-        """Clean numeric strings by removing commas and decimal points."""
-        if isinstance(value, str):
-            return value.replace(',', '').split('.')[0]
-        return value
-
-    def round_to_nearest_30_seconds(self, seconds):
-        """Round the given number of seconds to the nearest 30-second increment."""
-        try:
-            if pd.isna(seconds) or not str(seconds).strip():
-                return 0
-            return round(float(seconds) / 15) * 15
-        except (ValueError, TypeError) as e:
-            logging.warning(f"Error rounding seconds '{seconds}': {e}")
-            return 0
-
-    def load_and_clean_data(self, file_path: str) -> Optional[pd.DataFrame]:
-        """Load data from the selected input file and perform initial transformations."""
-        try:
-            logging.info(f"Loading data from {file_path}")
-            
-            # Read the main data
-            df = pd.read_csv(file_path, skiprows=3)
-            original_count = len(df)
-            
-            # Drop empty rows
-            df = df.dropna(how='all')
-            if len(df) < original_count:
-                logging.warning(f"Dropped {original_count - len(df)} empty rows")
-            
-            # Filter required columns
-            required_columns = ['id_contrattirighe', 'timerange2', 'dateschedule']
-            before_required = len(df)
-            df = df[df[required_columns].notna().all(axis=1)]
-            if len(df) < before_required:
-                logging.warning(f"Dropped {before_required - len(df)} rows with missing required values")
-            
-            # Filter out Textbox rows
-            df = df[~df['IMPORTO2'].astype(str).str.contains('Textbox', na=False)]
-            df = df[df.columns[~df.columns.str.contains('Textbox97|tot|Textbox61|Textbox53')]]
-            
-            # Clean numeric fields
-            df['id_contrattirighe'] = df['id_contrattirighe'].apply(self.clean_numeric)
-            if 'Textbox14' in df.columns:
-                df['Textbox14'] = df['Textbox14'].apply(self.clean_numeric)
-            
-            # Rename columns
-            column_mapping = {
-                'id_contrattirighe': 'Line',
-                'Textbox14': '#',
-                'duration3': 'Length',
-                'IMPORTO2': 'Gross Rate',
-                'nome2': 'Market',
-                'dateschedule': 'Air Date',
-                'airtimep': 'Program',
-                'bookingcode2': 'Media'
-            }
-            
-            logging.info(f"Available columns before renaming: {df.columns.tolist()}")
-            rename_dict = {k: v for k, v in column_mapping.items() if k in df.columns}
-            df = df.rename(columns=rename_dict)
-            logging.info(f"Columns after renaming: {df.columns.tolist()}")
-            
-            # Split timerange2
-            if 'timerange2' in df.columns:
-                df[['Time In', 'Time Out']] = df['timerange2'].str.split('-', expand=True)
-            
-            # Validate required columns after renaming
-            df = df[df['Line'].notna()]
-            
-            if df.empty:
-                raise ProcessingError("No valid data rows found after cleaning")
-                
-            return df
-            
-        except Exception as e:
-            logging.error(f"Error in load_and_clean_data: {str(e)}")
-            raise
-
     def generate_billcode(self, text_box_180: str, text_box_171: str) -> str:
         """Combine Textbox180 and Textbox171 for billcode."""
         if text_box_180 and text_box_171:
@@ -222,47 +146,6 @@ Log File: {log_file}
         elif text_box_180:
             return text_box_180
         return ''
-
-    def apply_transformations(self, df: pd.DataFrame, text_box_180: str, 
-                            text_box_171: str) -> pd.DataFrame:
-        """Apply transformations including billcode."""
-        try:
-            # Set billcode
-            billcode = self.generate_billcode(text_box_180, text_box_171)
-            df['Bill Code'] = billcode
-            
-            # Check Market column
-            if 'Market' not in df.columns:
-                logging.error("Market column not found in DataFrame")
-                logging.info(f"Available columns: {df.columns.tolist()}")
-                raise KeyError("Market column not found in DataFrame")
-            
-            # Apply market replacements
-            logging.info(f"Applying market replacements: {self.config.market_replacements}")
-            df['Market'] = df['Market'].replace(self.config.market_replacements)
-            
-            # Transform Gross Rate
-            if 'Gross Rate' in df.columns:
-                df['Gross Rate'] = df['Gross Rate'].astype(str).str.replace('$', '').str.replace(',', '')
-                df['Gross Rate'] = pd.to_numeric(df['Gross Rate'], errors='coerce').fillna(0).map("${:,.2f}".format)
-            
-            # Transform Length
-            if 'Length' in df.columns:
-                df['Length'] = df['Length'].apply(self.round_to_nearest_30_seconds)
-                df['Length'] = pd.to_timedelta(df['Length'], unit='s').apply(lambda x: str(x).split()[-1].zfill(8))
-            
-            # Transform Line and #
-            if 'Line' in df.columns:
-                df['Line'] = pd.to_numeric(df['Line'], errors='coerce').fillna(0).astype(int)
-            
-            if '#' in df.columns:
-                df['#'] = pd.to_numeric(df['#'], errors='coerce').fillna(0).astype(int)
-            
-            return df
-            
-        except Exception as e:
-            logging.error(f"Error in transformations: {str(e)}")
-            raise
 
     def prompt_for_user_inputs(self) -> Dict:
         """Prompt the user for processing parameters."""
@@ -434,9 +317,64 @@ Log File: {log_file}
             else:
                 print("❌ Please enter 'Y' for Yes or 'N' for No")
 
+    def verify_languages(self, df: pd.DataFrame, language_info: Tuple[Dict[str, int], pd.Series]) -> pd.Series:
+        """
+        Show detected languages and verify accuracy.
+        """
+        detected_counts, row_languages = language_info
+        
+        print("\n" + "-"*80)
+        print("Language Detection Results".center(80))
+        print("-"*80)
+        
+        # Show what was found
+        for lang_code, count in detected_counts.items():
+            lang_name = next((k for k, v in self.file_processor.language_mapping.items() 
+                            if v == lang_code and k != 'default'), "English")
+            print(f"   • {lang_name} ({lang_code}): {count} entries")
+        
+        # Quick verification of first few rows of each language
+        print("\nSample entries:")
+        for lang_code in detected_counts:
+            rows = df[row_languages == lang_code]
+            if not rows.empty:
+                print(f"\n{lang_code}:")
+                samples = rows['rowdescription'].head(2)
+                for desc in samples:
+                    print(f"   • {desc}")
+        
+        # Only ask for verification if something seems off
+        if len(detected_counts) > 1:  # Multiple languages detected
+            print("\nDoes this look correct? (Y/N)")
+            if input().strip().lower() == 'n':
+                # Show available options
+                print("\nAvailable language codes:")
+                for idx, code in enumerate(self.config.language_options, 1):
+                    print(f"   [{idx}] {code}")
+                
+                # Allow fixes
+                while True:
+                    print("\nEnter row number to change language, or press Enter to continue")
+                    row_input = input().strip()
+                    if not row_input:
+                        break
+                    
+                    try:
+                        row_idx = int(row_input)
+                        if 0 <= row_idx < len(df):
+                            print(f"Current: {df.iloc[row_idx]['rowdescription']}")
+                            print(f"Language: {row_languages.iloc[row_idx]}")
+                            new_lang = input("Enter new language code: ").strip().upper()
+                            if new_lang in self.config.language_options:
+                                row_languages.iloc[row_idx] = new_lang
+                    except ValueError:
+                        print("Invalid input, try again")
+        
+        return row_languages
+
     def apply_user_inputs(self, df: pd.DataFrame, billing_type: str, revenue_type: str, 
                         agency_flag: str, sales_person: str, agency_fee: Optional[float],
-                        language: str, type_: str, affidavit: str) -> pd.DataFrame:
+                        language: Dict, type_: str, affidavit: str) -> pd.DataFrame:
         """Apply user input to the appropriate columns in the DataFrame."""
         try:
             logging.info("Applying user inputs to DataFrame...")
@@ -446,9 +384,9 @@ Log File: {log_file}
             df['Revenue Type'] = revenue_type
             df['Agency?'] = agency_flag
             df['Sales Person'] = sales_person
-            df['Lang.'] = language
+            df['Lang.'] = df.index.map(language)  # Map language codes from the dictionary
             df['Type'] = type_
-            df['Affidavit?'] = affidavit  # Add this line
+            df['Affidavit?'] = affidavit
 
             # Initialize Broker Fees column
             df['Broker Fees'] = None
@@ -582,8 +520,7 @@ Log File: {log_file}
             logging.error(f"Error saving to Excel: {str(e)}")
             raise
 
-    def generate_processing_summary(self, df: pd.DataFrame, input_file: str,
-                                output_file: str, user_inputs: Dict) -> Dict:
+    def generate_processing_summary(self, df: pd.DataFrame, input_file: str, output_file: str, user_inputs: Dict) -> Dict:
         """Generate comprehensive summary of the processing results."""
         try:
             # Convert date column to datetime
@@ -642,21 +579,23 @@ Log File: {log_file}
             logging.info("Extracting header values...")
             text_box_180, text_box_171 = self.extract_header_values(file_path)
             
-            # Load and clean data
+            # Load and clean data using FileProcessor
             logging.info("Loading and cleaning data...")
-            df = self.load_and_clean_data(file_path)
+            df = self.file_processor.load_and_clean_data(file_path)
             
-            # Apply transformations
+            # Detect and verify languages using FileProcessor
+            logging.info("Detecting languages in data...")
+            detected_counts, row_languages = self.file_processor.detect_languages(df)
+            logging.info(f"Detected language counts: {detected_counts}")
+            
+            # Apply transformations using FileProcessor
             logging.info("Applying transformations...")
-            df = self.apply_transformations(df, text_box_180, text_box_171)
+            df = self.file_processor.apply_transformations(df, text_box_180, text_box_171)
             
             # Get user inputs if not provided
             if user_inputs is None:
                 logging.info("Collecting user inputs...")
                 user_inputs = self.prompt_for_user_inputs()
-                # Add language selection
-                language = self.prompt_for_language()
-                user_inputs['language'] = language
                 # Add type selection
                 type_ = self.prompt_for_type()
                 user_inputs['type'] = type_
@@ -664,7 +603,13 @@ Log File: {log_file}
                 affidavit = self.prompt_for_affidavit()
                 user_inputs['affidavit'] = affidavit
             
-            # Apply user inputs
+            # Convert row_languages (Series) to a dictionary
+            language_dict = row_languages.to_dict() if not row_languages.empty else {}
+            
+            # Add the language dictionary to user_inputs
+            user_inputs['language'] = language_dict
+            
+            # Apply user inputs with row-specific languages
             logging.info("Applying user inputs...")
             df = self.apply_user_inputs(
                 df,
@@ -673,9 +618,9 @@ Log File: {log_file}
                 agency_flag=user_inputs['agency_flag'],
                 sales_person=user_inputs['sales_person'],
                 agency_fee=user_inputs['agency_fee'],
-                language=user_inputs['language'],
+                language=language_dict,  # Pass the dictionary of languages
                 type_=user_inputs['type'],
-                affidavit=user_inputs['affidavit']  # Add this line
+                affidavit=user_inputs['affidavit']
             )
             
             # Save output file
@@ -686,6 +631,13 @@ Log File: {log_file}
             logging.info("Generating processing summary...")
             summary = self.generate_processing_summary(df, file_path, output_file, user_inputs)
             
+            # Add language detection info to summary
+            language_distribution = row_languages.value_counts().to_dict() if not row_languages.empty else {}
+            summary["language_info"] = {
+                "detected_languages": detected_counts,
+                "language_distribution": language_distribution  # Already a dictionary
+            }
+            
             return ProcessingResult(
                 filename=filename,
                 success=True,
@@ -694,7 +646,7 @@ Log File: {log_file}
             )
             
         except Exception as e:
-            logging.error(f"Error processing {filename}: {str(e)}")
+            logging.error(f"Error processing {filename}: {str(e)}", exc_info=True)
             return ProcessingResult(
                 filename=filename,
                 success=False,
@@ -712,52 +664,90 @@ Log File: {log_file}
         print("-"*80)
         shared_inputs = input("\nDo all files in this batch share the same user inputs? (Y/N): ").strip().lower()
         
-        user_inputs = None
+        base_user_inputs = None
         if shared_inputs == 'y':
-            print("\nCollecting user inputs for the entire batch...")
-            user_inputs = self.prompt_for_user_inputs()
-            # Add language selection
-            language = self.prompt_for_language()
-            user_inputs['language'] = language
+            print("\nCollecting shared user inputs for the batch...")
+            base_user_inputs = self.prompt_for_user_inputs()
             # Add type selection
             type_ = self.prompt_for_type()
-            user_inputs['type'] = type_
+            base_user_inputs['type'] = type_
             # Add affidavit selection
             affidavit = self.prompt_for_affidavit()
-            user_inputs['affidavit'] = affidavit
+            base_user_inputs['affidavit'] = affidavit
+            # Note: Language will be detected per file
         
         files_iter = tqdm(files, desc="Processing files") if show_progress else files
         
         for file_path in files_iter:
-            if shared_inputs == 'y':
-                # Use the collected user inputs for all files
-                result = self.process_file(file_path, user_inputs)
-            else:
-                # Prompt for user inputs for each file
-                result = self.process_file(file_path)
-            
-            if result.success:
-                successful.append(result)
-            else:
-                failed.append(result)
-            
-            # Save interim results
-            self._save_interim_results(successful, failed)
-
+            try:
+                # Load the data first to detect language using FileProcessor
+                df = self.file_processor.load_and_clean_data(file_path)
+                
+                # Detect languages in this file using FileProcessor
+                detected_languages = self.file_processor.detect_languages(df)
+                
+                if base_user_inputs:
+                    # Create a copy of base inputs for this file
+                    file_inputs = base_user_inputs.copy()
+                else:
+                    # Get new inputs for this file
+                    file_inputs = self.prompt_for_user_inputs()
+                    type_ = self.prompt_for_type()
+                    file_inputs['type'] = type_
+                    affidavit = self.prompt_for_affidavit()
+                    file_inputs['affidavit'] = affidavit
+                
+                # Always detect and verify language for each file
+                print(f"\nProcessing file: {os.path.basename(file_path)}")
+                primary_language = self.verify_languages(df, detected_languages)
+                file_inputs['language'] = primary_language
+                
+                # Process the file with complete inputs
+                result = self.process_file(file_path, file_inputs)
+                
+                if result.success:
+                    successful.append(result)
+                else:
+                    failed.append(result)
+                
+                # Save interim results
+                self._save_interim_results(successful, failed)
+                
+            except Exception as e:
+                logging.error(f"Error processing {file_path}: {str(e)}")
+                failed.append(ProcessingResult(
+                    filename=os.path.basename(file_path),
+                    success=False,
+                    error_message=str(e)
+                ))
+        
         self._display_batch_summary(successful, failed)
         return {"successful": successful, "failed": failed}
 
-    def _save_interim_results(self, successful: List[ProcessingResult], 
-                            failed: List[ProcessingResult]):
+    def _save_interim_results(self, successful: List[ProcessingResult], failed: List[ProcessingResult]):
         """Save interim results to protect against crashes."""
         interim_file = Path(self.config.paths.output_dir) / 'interim_results.json'
         
+        # Convert ProcessingResult objects to dictionaries
         results = {
             "timestamp": datetime.now().isoformat(),
-            "successful": [vars(r) for r in successful],
-            "failed": [vars(r) for r in failed]
+            "successful": [],
+            "failed": []
         }
         
+        # Convert successful results
+        for result in successful:
+            result_dict = vars(result)
+            # Convert Series to dict if present in metrics
+            if "metrics" in result_dict and "language_distribution" in result_dict["metrics"]:
+                result_dict["metrics"]["language_distribution"] = result_dict["metrics"]["language_distribution"].to_dict()
+            results["successful"].append(result_dict)
+        
+        # Convert failed results
+        for result in failed:
+            results["failed"].append(vars(result))
+        
+        # Save to JSON
         with open(interim_file, 'w') as f:
             json.dump(results, f, indent=2)
 
