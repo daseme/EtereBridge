@@ -6,679 +6,839 @@ import math
 import sys
 import csv
 import json
+import logging
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from tqdm import tqdm
 from config_manager import config_manager
 
+@dataclass
+class ProcessingResult:
+    """Tracks the result of processing a single file."""
+    filename: str
+    success: bool
+    error_message: Optional[str] = None
+    warnings: List[str] = field(default_factory=list)
+    metrics: Dict = field(default_factory=dict)
+    output_file: Optional[str] = None
 
+class ProcessingError(Exception):
+    """Custom exception for processing-related errors."""
+    pass
 
-def print_header():
-    """Display a welcome header with basic instructions."""
-    print("\n" + "="*80)
-    print("Excel File Processing Tool".center(80))
-    print("="*80)
-    print("\nThis tool helps you process and transform Excel files according to specified formats.")
-    print("Follow the prompts below to begin processing your files.\n")
-
-def round_to_nearest_30_seconds(seconds):
-    """Round the given number of seconds to the nearest 30-second increment.
+class EtereBridge:
+    """Enhanced file processor with error recovery and progress tracking."""
     
-    31 seconds will round down to 30 seconds
-    45 seconds will round up to 60 seconds
-    15 seconds will round to 0 seconds
+    def __init__(self):
+        """Initialize the EtereBridge processor."""
+        self.config = config_manager.get_config()
+        self.log_file = config_manager.setup_logging()
+        self.results: List[ProcessingResult] = []
+        
+    def print_header(self):
+        """Display a welcome header with basic instructions."""
+        header = """
+╔════════════════════════════════════════════════════════════════════════════╗
+║                        Excel File Processing Tool                           ║
+╚════════════════════════════════════════════════════════════════════════════╝
 
-    75 seconds will round to 90 seconds
-    """
-    return round(float(seconds) / 15) * 15
+This tool helps you process and transform Excel files according to specified formats.
+Follow the prompts below to begin processing your files.
 
-def select_processing_mode():
-    """Ask the user whether to process all files or select one at a time."""
-    print("\n" + "-"*80)
-    print("Processing Mode Selection".center(80))
-    print("-"*80)
-    print("\nChoose how you want to process your files:")
-    print("  [A] Process all files automatically")
-    print("  [S] Select and process files one at a time")
-    
-    while True:
-        choice = input("\nYour choice (A/S): ").strip().upper()
-        if choice in ['A', 'S']:
-            return choice
-        print("❌ Invalid choice. Please enter 'A' for all files or 'S' to select files.")
+Version: 2.0
+Log File: {log_file}
+        """.format(log_file=self.log_file)
+        print(header)
 
-def list_files():
-    """List all available files in the input directory."""
-    files = [f for f in os.listdir(config_manager.get_config().paths.input_dir) if f.endswith('.csv')]
-    if not files:
-        print("\n❌ No CSV files found in the input directory:", config_manager.get_config().paths.input_dir)
-        print("Please add your CSV files to this directory and try again.")
-        sys.exit(1)
-    return files
+    def list_files(self) -> List[str]:
+        """List all available files in the input directory."""
+        files = [f for f in os.listdir(self.config.paths.input_dir) 
+                if f.endswith('.csv')]
+        if not files:
+            print("\n❌ No CSV files found in the input directory:", 
+                  self.config.paths.input_dir)
+            print("Please add your CSV files to this directory and try again.")
+            sys.exit(1)
+        return files
 
-def select_input_file(files):
-    """Prompt the user to select a file from the input directory."""
-    print("\n" + "-"*80)
-    print("File Selection".center(80))
-    print("-"*80)
-    print("\nAvailable files for processing:")
-    
-    # Calculate the maximum width needed for file names
-    max_width = max(len(str(i)) + len(filename) for i, filename in enumerate(files, 1))
-    
-    # Create two columns if there are many files
-    mid_point = (len(files) + 1) // 2
-    for i, filename in enumerate(files, 1):
-        # Format each line with consistent spacing
-        line = f"  [{i:2d}] {filename}"
-        if i <= mid_point and i + mid_point <= len(files):
-            # Print two columns if there are enough files
-            second_file = files[i + mid_point - 1]
-            second_item = f"  [{i + mid_point:2d}] {second_file}"
-            print(f"{line:<40} {second_item}")
-        else:
-            print(line)
-    
-    while True:
-        try:
-            choice = input("\nEnter the number of the file you want to process: ").strip()
-            if choice.lower() == 'q':
-                print("\nExiting program...")
-                sys.exit(0)
-            
-            choice = int(choice)
-            if 1 <= choice <= len(files):
-                selected_file = files[choice - 1]
-                print(f"\n✅ Selected: {selected_file}")
-                return os.path.join(config_manager.get_config().paths.input_dir, selected_file)
+    def select_processing_mode(self) -> str:
+        """Ask the user whether to process all files or select one at a time."""
+        print("\n" + "-"*80)
+        print("Processing Mode Selection".center(80))
+        print("-"*80)
+        print("\nChoose how you want to process your files:")
+        print("  [A] Process all files automatically")
+        print("  [S] Select and process files one at a time")
+        
+        while True:
+            choice = input("\nYour choice (A/S): ").strip().upper()
+            if choice in ['A', 'S']:
+                return choice
+            print("❌ Invalid choice. Please enter 'A' for all files or 'S' to select files.")
+
+    def select_input_file(self, files: List[str]) -> Optional[str]:
+        """Prompt the user to select a file from the input directory."""
+        print("\n" + "-"*80)
+        print("File Selection".center(80))
+        print("-"*80)
+        print("\nAvailable files for processing:")
+        
+        # Create two columns if there are many files
+        mid_point = (len(files) + 1) // 2
+        for i, filename in enumerate(files, 1):
+            line = f"  [{i:2d}] {filename}"
+            if i <= mid_point and i + mid_point <= len(files):
+                second_file = files[i + mid_point - 1]
+                second_item = f"  [{i + mid_point:2d}] {second_file}"
+                print(f"{line:<40} {second_item}")
             else:
-                print(f"❌ Please enter a number between 1 and {len(files)}")
-        except ValueError:
-            print("❌ Please enter a valid number or 'q' to quit")
-
-def clean_numeric(value):
-    """Clean numeric strings by removing commas and decimal points."""
-    if isinstance(value, str):
-        return value.replace(',', '').split('.')[0]
-    return value
-
-def load_and_clean_data(file_path):
-    """Load data from the selected input file and perform initial transformations."""
-    try:
-        # Read the main data, skipping the first 3 rows (header information)
-        df = pd.read_csv(file_path, skiprows=3)
+                print(line)
         
-        # Drop completely empty rows
-        df = df.dropna(how='all')
-        
-        # Filter out rows that don't have all our required columns populated
-        required_columns = ['id_contrattirighe', 'timerange2', 'dateschedule']
-        df = df[df[required_columns].notna().all(axis=1)]
-        
-        # Filter out rows containing 'Textbox' in IMPORTO2 column
-        df = df[~df['IMPORTO2'].astype(str).str.contains('Textbox', na=False)]
-        
-        # Filter out rows that have 'Textbox' in their column names
-        # This will remove the summary rows that use different column structure
-        df = df[df.columns[~df.columns.str.contains('Textbox97|tot|Textbox61|Textbox53')]]
-        
-        # Clean numeric fields before renaming
-        df['id_contrattirighe'] = df['id_contrattirighe'].apply(clean_numeric)
-        df['Textbox14'] = df['Textbox14'].apply(clean_numeric)
-        
-        # Rename columns
-        df = df.rename(columns={
-            'id_contrattirighe': 'Line',
-            'Textbox14': '#',
-            'duration3': 'Length',
-            'IMPORTO2': 'Gross Rate',
-            'nome2': 'Market',
-            'dateschedule': 'Air Date',
-            'airtimep': 'Program',
-            'bookingcode2': 'Media'
-        })
-        
-        # Split timerange2 into Time In and Time Out
-        df[['Time In', 'Time Out']] = df['timerange2'].str.split('-', expand=True)
-        
-        # Double check - remove any rows that don't match our expected data structure
-        df = df[df['Line'].notna() & df['Air Date'].notna()]
-        
-        return df
-        
-    except Exception as e:
-        print(f"❌ Error loading or cleaning data: {str(e)}")
-        return None
-
-def extract_header_values(file_path):
-    """Extract header values from first section of CSV."""
-    try:
-        with open(file_path, 'r', encoding='utf-8') as file:
-            # Read first two lines
-            lines = file.readlines()[:2]
-            
-            # For the second line, we'll use a more robust CSV parsing
-            import csv
-            header_row = [x.strip() for x in lines[0].split(',')]
-            value_row = next(csv.reader([lines[1]]))
-            
-            # Map headers to values
-            header_dict = dict(zip(header_row, value_row))
-            
-            # Get values from correct columns
-            text_box_180 = header_dict.get('Textbox180', '').strip()
-            # Get correct agency name from Textbox171
-            text_box_171 = header_dict.get('Textbox171', '').strip()
-            
-            # Debug print
-            print("\nHeader values found:")
-            for key, value in header_dict.items():
-                print(f"{key}: '{value}'")
+        while True:
+            try:
+                choice = input("\nEnter the number of the file you want to process (or 'q' to quit): ").strip()
+                if choice.lower() == 'q':
+                    print("\nExiting program...")
+                    sys.exit(0)
                 
-            return text_box_180, text_box_171
-            
-    except Exception as e:
-        print(f"Error reading header: {e}")
-        return '', ''
-
-
-def generate_billcode(text_box_180, text_box_171):
-    """Combine Textbox180 and Textbox171 for billcode."""
-    if text_box_180 and text_box_171:
-        return f"{text_box_180}:{text_box_171}"
-    elif text_box_171:
-        return text_box_171
-    elif text_box_180:
-        return text_box_180
-    return ''
-
-
-def apply_transformations(df, text_box_180, text_box_171):
-    """Apply transformations including billcode."""
-    try:
-        # Set billcode first
-        billcode = generate_billcode(text_box_180, text_box_171)
-        df['Bill Code'] = billcode
-        
-        # Update market replacements to use config
-        df['Market'] = df['Market'].replace(config_manager.get_config().market_replacements)
-        
-        # Rest of transformations
-        df['Gross Rate'] = df['Gross Rate'].astype(str).str.replace('$', '').str.replace(',', '')
-        df['Gross Rate'] = pd.to_numeric(df['Gross Rate'], errors='coerce').fillna(0).map("${:,.2f}".format)
-        df['Length'] = df['Length'].apply(round_to_nearest_30_seconds)
-        df['Length'] = pd.to_timedelta(df['Length'], unit='s').apply(lambda x: str(x).split()[-1].zfill(8))
-        df['Line'] = pd.to_numeric(df['Line'], errors='coerce').fillna(0).astype(int)
-        df['#'] = pd.to_numeric(df['#'], errors='coerce').fillna(0).astype(int)
-        
-        return df
-        
-    except Exception as e:
-        print(f"Error in transformations: {e}")
-        raise
-
-def prompt_for_user_inputs():
-    """Prompt the user for values to fill in certain columns."""
-    print("\n" + "-"*80)
-    print("Additional Information Needed".center(80))
-    print("-"*80)
-    
-    # Get Sales Person
-    sales_people = config_manager.get_config().sales_people
-    print("\n1. Sales Person:")
-    for idx, person in enumerate(sales_people, 1):
-        print(f"   [{idx}] {person}")
-    while True:
-        try:
-            choice = int(input("\nSelect sales person (enter number): "))
-            if 1 <= choice <= len(sales_people):
-                sales_person = sales_people[choice-1]
-                break
-            print(f"❌ Please enter a number between 1 and {len(sales_people)}")
-        except ValueError:
-            print("❌ Please enter a valid number")
-    
-    # Billing Type
-    print("\n2. Billing Type:")
-    print("   [C] Calendar")
-    print("   [B] Broadcast")
-    while True:
-        billing_input = input("\nSelect billing type (C/B): ").strip().upper()
-        if billing_input == 'C':
-            billing_type = "Calendar"
-            break
-        elif billing_input == 'B':
-            billing_type = "Broadcast"
-            break
-        print("❌ Please enter 'C' for Calendar or 'B' for Broadcast")
-    
-    # Revenue Type
-    print("\n3. Revenue Type:")
-    print("   [B] Branded Content")
-    print("   [D] Direct Response")
-    print("   [I] Internal Ad Sales")
-    print("   [P] Paid Programming")
-    while True:
-        revenue_input = input("\nSelect revenue type (B/D/I/P): ").strip().upper()
-        if revenue_input == 'B':
-            revenue_type = "Branded Content"
-            break
-        elif revenue_input == 'D':
-            revenue_type = "Direct Response"
-            break
-        elif revenue_input == 'I':
-            revenue_type = "Internal Ad Sales"
-            break
-        elif revenue_input == 'P':
-            revenue_type = "Paid Programming"
-            break
-        print("❌ Please enter 'B' for Branded Content, 'D' for Direct Response, 'I' for Internal Ad Sales, or 'P' for Paid Programming")
-    
-    # Updated Agency Flag
-    print("\n4. Order Type:")
-    print("   [A] Agency")
-    print("   [N] Non-Agency")
-    print("   [T] Trade")
-    while True:
-        agency_input = input("\nSelect order type (A/N/T): ").strip().upper()
-        if agency_input == 'A':
-            agency_flag = "Agency"
-            # Add agency fee prompt
-            print("\n5. Agency Fee Type:")
-            print("   [S] Standard (15%)")
-            print("   [C] Custom")
-            while True:
-                fee_type = input("\nSelect fee type (S/C): ").strip().upper()
-                if fee_type == 'S':
-                    agency_fee = 0.15
-                    break
-                elif fee_type == 'C':
-                    while True:
-                        try:
-                            custom_fee = float(input("\nEnter custom fee percentage (without % symbol): "))
-                            if 0 <= custom_fee <= 100:
-                                agency_fee = custom_fee / 100
-                                break
-                            print("❌ Please enter a percentage between 0 and 100")
-                        except ValueError:
-                            print("❌ Please enter a valid number")
-                    break
-                print("❌ Please enter 'S' for Standard or 'C' for Custom")
-            break
-        elif agency_input == 'N':
-            agency_flag = "Non-Agency"
-            agency_fee = None
-            break
-        elif agency_input == 'T':
-            agency_flag = "Trade"
-            agency_fee = None
-            break
-        print("❌ Please enter 'A' for Agency, 'N' for Non-Agency, or 'T' for Trade")
-    
-    print("\n✅ Information collected successfully!")
-    return billing_type, revenue_type, agency_flag, sales_person, agency_fee
-
-def apply_user_inputs(df, billing_type, revenue_type, agency_flag, sales_person, agency_fee):
-    """Apply user input to the appropriate columns in the DataFrame."""
-    print("\n🔄 Applying user inputs to data...")
-    df['Billing Type'] = billing_type
-    df['Revenue Type'] = revenue_type
-    df['Agency?'] = agency_flag
-    df['Sales Person'] = sales_person
-
-    # Initialize Broker Fees column as empty
-    if 'Broker Fees' not in df.columns:
-        df['Broker Fees'] = None
-
-    # Ensure all required columns exist
-    print("🔄 Ensuring all required columns exist...")
-    for col in config_manager.get_config().final_columns:
-        if col not in df.columns:
-            df[col] = None
-    
-    # Reorder columns according to config
-    print("🔄 Reordering columns...")
-    df = df[config_manager.get_config().final_columns]
-    
-    print("✅ User inputs applied successfully!")
-    return df
-
-def save_to_excel(df, template_path, output_path, agency_fee=0.15):  # Added agency_fee parameter
-    """Save DataFrame to Excel, preserving template but removing excess rows."""
-    try:
-        workbook = load_workbook(template_path)
-        sheet = workbook.active
-        
-        # Get column indices from config
-        columns = config_manager.get_config().final_columns
-        broker_fees_idx = columns.index('Broker Fees') + 1
-        gross_rate_idx = columns.index('Gross Rate') + 1
-        agency_idx = columns.index('Agency?') + 1
-        
-        # Write headers and data
-        for col_num, column_title in enumerate(columns, 1):
-            sheet.cell(row=1, column=col_num, value=column_title)
-
-        for row_num, row_data in enumerate(df.values, 2):
-            for col_num, cell_value in enumerate(row_data, 1):
-                column_name = columns[col_num - 1]
-                cell = sheet.cell(row=row_num, column=col_num)
-                
-                if column_name == 'Broker Fees':
-                    # Get agency status and gross rate for this row
-                    agency_cell = sheet.cell(row=row_num, column=agency_idx)
-                    gross_rate_cell = sheet.cell(row=row_num, column=gross_rate_idx)
-                    
-                    if agency_cell.value == 'Agency':
-                        # Get the Excel column letter for Gross Rate
-                        from openpyxl.utils import get_column_letter
-                        gross_rate_col_letter = get_column_letter(gross_rate_idx)
-                        # Set formula using the provided agency fee percentage
-                        cell.value = f'={gross_rate_col_letter}{row_num}*{agency_fee}'
-                        cell.number_format = '$#,##0.00'
-                    else:
-                        cell.value = None
-                
-                elif column_name == 'Gross Rate':
-                    if cell_value and str(cell_value).strip():
-                        # Remove $ and , from the value
-                        clean_value = str(cell_value).replace('$', '').replace(',', '')
-                        try:
-                            cell.value = float(clean_value)
-                            cell.number_format = '$#,##0.00'
-                        except ValueError:
-                            cell.value = cell_value
-                
-                elif column_name in ['Spot Value', 'Station Net']:
-                    if cell_value and str(cell_value).strip():
-                        clean_value = str(cell_value).replace('$', '').replace(',', '')
-                        try:
-                            cell.value = float(clean_value)
-                            cell.number_format = '$#,##0.00'
-                        except ValueError:
-                            cell.value = cell_value
-                
+                choice = int(choice)
+                if 1 <= choice <= len(files):
+                    selected_file = files[choice - 1]
+                    print(f"\n✅ Selected: {selected_file}")
+                    return os.path.join(self.config.paths.input_dir, selected_file)
                 else:
-                    cell.value = cell_value
-        
-        # Remove excess rows while preserving formulas
-        last_data_row = len(df) + 1
-        if sheet.max_row > last_data_row:
-            sheet.delete_rows(last_data_row + 1, sheet.max_row - last_data_row)
-        
-        workbook.save(output_path)
-        print("✅ Excel file saved with Broker Fees calculations")
-        
-    except Exception as e:
-        print(f"\n❌ Error saving to Excel: {str(e)}")
+                    print(f"❌ Please enter a number between 1 and {len(files)}")
+            except ValueError:
+                print("❌ Please enter a valid number or 'q' to quit")
 
-def generate_processing_summary(df):
-    """Generate summary statistics for the processed file."""
-    try:
-        # Convert date column to datetime
-        df['Air Date'] = pd.to_datetime(df['Air Date'])
-        
-        # Convert Gross Rate to numeric for calculations
-        gross_values = df['Gross Rate'].str.replace('$', '').str.replace(',', '').astype(float)
-        
-        summary = {
-            "total_spots": len(df),
-            "total_gross_value": gross_values.sum(),
-            "markets_breakdown": df['Market'].value_counts().to_dict(),
-            "media_breakdown": df['Media'].value_counts().to_dict(),
-            "avg_spot_length": pd.to_timedelta(df['Length']).mean(),
-            "date_range": {
-                "earliest": df['Air Date'].min().strftime('%Y-%m-%d'),
-                "latest": df['Air Date'].max().strftime('%Y-%m-%d')
-            },
-            "programs": len(df['Program'].unique()),
-        }
-        return summary
-        
-    except Exception as e:
-        print(f"Error generating summary: {str(e)}")
-        raise
-
-def display_processing_summary(summary):
-    """Display the processing summary in a user-friendly format."""
-    try:
-        print("\nProcessing Summary")
-        print("-" * 80)
-        
-        print(f"\nOverall Statistics:")
-        print(f"Total Spots Processed: {summary['overall_metrics']['total_spots']:,}")
-        print(f"Total Gross Value: ${summary['overall_metrics']['total_gross_value']:,.2f}")
-        print(f"Average Spot Value: ${summary['overall_metrics']['average_spot_value']:,.2f}")
-        print(f"Unique Programs: {summary['overall_metrics']['unique_programs']}")
-        
-        print(f"\nDate Range: {summary['date_range']['earliest']} to {summary['date_range']['latest']}")
-        print(f"Total Days: {summary['date_range']['total_days']}")
-        
-        print(f"\nLength Statistics:")
-        print(f"Average Length: {summary['length_statistics']['average_length']}")
-        print(f"Min Length: {summary['length_statistics']['min_length']}")
-        print(f"Max Length: {summary['length_statistics']['max_length']}")
-        
-        print(f"\nMarket Breakdown:")
-        for market, count in summary['breakdowns']['markets'].items():
-            print(f"  {market}: {count:,} spots")
-        
-        print(f"\nMedia Type Breakdown:")
-        for media, count in summary['breakdowns']['media_types'].items():
-            print(f"  {media}: {count:,} spots")
-            
-        print(f"\nSpots by Day:")
-        for day, count in summary['breakdowns']['spots_by_day'].items():
-            print(f"  {day}: {count:,} spots")
-            
-    except Exception as e:
-        print(f"Error displaying summary: {str(e)}")
-        raise
-
-def generate_enhanced_processing_summary(df, input_file, output_file, user_inputs):
-    """
-    Generate an enhanced summary of the file processing including metadata.
-    
-    Args:
-        df (pandas.DataFrame): The processed dataframe
-        input_file (str): Path to input file
-        output_file (str): Path to output file
-        user_inputs (dict): Dictionary containing user inputs used for processing
-    
-    Returns:
-        dict: Enhanced summary dictionary
-    """
-    # Convert date column to datetime
-    df['Air Date'] = pd.to_datetime(df['Air Date'])
-    
-    # Convert Gross Rate to numeric for calculations
-    gross_values = df['Gross Rate'].str.replace('$', '').str.replace(',', '').astype(float)
-    
-    # Calculate spots by day of week
-    df['Day_of_Week'] = df['Air Date'].dt.day_name()
-    spots_by_day = df['Day_of_Week'].value_counts().to_dict()
-    
-    summary = {
-        "processing_info": {
-            "timestamp": datetime.now().isoformat(),
-            "input_file": input_file,
-            "output_file": output_file,
-            "user_inputs": user_inputs
-        },
-        "overall_metrics": {
-            "total_spots": len(df),
-            "total_gross_value": float(gross_values.sum()),  # Convert to float for JSON serialization
-            "average_spot_value": float(gross_values.mean()),
-            "unique_programs": len(df['Program'].unique()),
-        },
-        "date_range": {
-            "earliest": df['Air Date'].min().isoformat(),
-            "latest": df['Air Date'].max().isoformat(),
-            "total_days": (df['Air Date'].max() - df['Air Date'].min()).days + 1
-        },
-        "breakdowns": {
-            "markets": df['Market'].value_counts().to_dict(),
-            "media_types": df['Media'].value_counts().to_dict(),
-            "spots_by_day": spots_by_day,
-            "programs": df['Program'].value_counts().to_dict()
-        },
-        "length_statistics": {
-            "average_length": str(pd.to_timedelta(df['Length']).mean()),
-            "min_length": str(pd.to_timedelta(df['Length']).min()),
-            "max_length": str(pd.to_timedelta(df['Length']).max())
-        }
-    }
-    
-    return summary
-
-def save_processing_summary(summary, filename_base):
-    """
-    Save processing summary in multiple formats.
-    
-    Args:
-        summary (dict): The processing summary dictionary
-        filename_base (str): Base filename to use for saving
-    
-    Returns:
-        tuple: Paths to saved summary files
-    """
-    # Create summaries directory if it doesn't exist
-    summary_dir = os.path.join(config_manager.get_config().paths.output_dir, 'summaries')
-    os.makedirs(summary_dir, exist_ok=True)
-    
-    # Create timestamp-based subdirectory
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    summary_subdir = os.path.join(summary_dir, f"{filename_base}_{timestamp}")
-    os.makedirs(summary_subdir, exist_ok=True)
-    
-    # Save JSON version
-    json_path = os.path.join(summary_subdir, "summary.json")
-    with open(json_path, 'w', encoding='utf-8') as f:
-        json.dump(summary, f, indent=2, ensure_ascii=False)
-    
-    # Create flattened version for CSV
-    flat_summary = {
-        "Timestamp": summary["processing_info"]["timestamp"],
-        "Input File": summary["processing_info"]["input_file"],
-        "Output File": summary["processing_info"]["output_file"],
-        "Total Spots": summary["overall_metrics"]["total_spots"],
-        "Total Gross Value": summary["overall_metrics"]["total_gross_value"],
-        "Average Spot Value": summary["overall_metrics"]["average_spot_value"],
-        "Unique Programs": summary["overall_metrics"]["unique_programs"],
-        "Start Date": summary["date_range"]["earliest"],
-        "End Date": summary["date_range"]["latest"],
-        "Total Days": summary["date_range"]["total_days"],
-        "Average Length": summary["length_statistics"]["average_length"],
-        "Billing Type": summary["processing_info"]["user_inputs"]["billing_type"],
-        "Revenue Type": summary["processing_info"]["user_inputs"]["revenue_type"],
-        "Agency Type": summary["processing_info"]["user_inputs"]["agency_flag"],
-        "Sales Person": summary["processing_info"]["user_inputs"]["sales_person"]
-    }
-    
-    # Save CSV version
-    csv_path = os.path.join(summary_subdir, "summary.csv")
-    pd.DataFrame([flat_summary]).to_csv(csv_path, index=False)
-    
-    print(f"\n✅ Summary files saved:")
-    print(f"   - JSON: {json_path}")
-    print(f"   - CSV: {csv_path}")
-    
-    return json_path, csv_path
-
-def process_file(file_path):
-    """Process a single input file and save processing statistics."""
-    print("\n" + "-"*80)
-    print(f"Processing: {os.path.basename(file_path)}".center(80))
-    print("-"*80)
-    
-    # Extract values from header
-    print("\n🔄 Extracting header values for TextBox180 and TextBox171...")
-    text_box_180, text_box_171 = extract_header_values(file_path)
-    print(f"✅ Extracted TextBox180: {text_box_180}, TextBox171: {text_box_171}")
-
-    print("\n🔄 Loading and cleaning data...")
-    df = load_and_clean_data(file_path)
-    if df is None:
-        print(f"❌ Failed to process {file_path}. Skipping.")
-        return
-
-    print("✅ Data loaded successfully!")
-    print("\n🔄 Applying transformations...")
-    df = apply_transformations(df, text_box_180, text_box_171)
-    print("✅ Transformations complete!")
-
-    # Prompt for additional user inputs
-    billing_type, revenue_type, agency_flag, sales_person, agency_fee = prompt_for_user_inputs()
-    
-    # Create user inputs dictionary for summary
-    user_inputs = {
-        "billing_type": billing_type,
-        "revenue_type": revenue_type,
-        "agency_flag": agency_flag,
-        "sales_person": sales_person,
-        "agency_fee": agency_fee if agency_fee is not None else "N/A"
-    }
-    
-    print("\n🔄 Applying user inputs and reordering columns...")
-    df = apply_user_inputs(df, billing_type, revenue_type, agency_flag, sales_person, agency_fee)
-    print("✅ User inputs applied!")
-
-    # Define output file name
-    filename_base = os.path.splitext(os.path.basename(file_path))[0]
-    timestamp = datetime.now().strftime("%Y-%m-%d")
-    output_file = os.path.join(config_manager.get_config().paths.output_dir, 
-                              f"{filename_base}_Processed_{timestamp}.xlsx")
-    
-    print("\n🔄 Saving to Excel...")
-    save_to_excel(df, config_manager.get_config().paths.template_path, output_file, agency_fee)  # Pass agency_fee here
-    print(f"✅ File saved successfully to: {output_file}")
-
-    # Generate and save enhanced summary
-    summary = generate_enhanced_processing_summary(
-        df, 
-        file_path, 
-        output_file, 
-        user_inputs
-    )
-    
-    # Save summary files
-    json_path, csv_path = save_processing_summary(summary, filename_base)
-    
-    # Display summary
-    display_processing_summary(summary)
-
-
-def main():
-    """Main function to control the flow of the program."""
-    print_header()
-    
-    try:
-        files = list_files()
-        choice = select_processing_mode()
-
-        if choice == 'A':
-            print("\n🔄 Processing all files automatically...")
-            for file in files:
-                file_path = os.path.join(config_manager.get_config().paths.input_dir, file)  # <- Fixed here
-                process_file(file_path)
-                print("\n" + "="*80)
-            print("\n✅ All files processed successfully!")
-            
-        elif choice == 'S':
-            while True:
-                file_path = select_input_file(files)
-                if file_path:
-                    process_file(file_path)
+    def extract_header_values(self, file_path: str) -> Tuple[str, str]:
+        """Extract header values from first section of CSV."""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                lines = file.readlines()[:2]
                 
-                print("\n" + "-"*80)
-                cont = input("\nWould you like to process another file? (Y/N): ").strip().lower()
-                if cont != 'y':
-                    print("\n✅ Processing complete! Thank you for using the tool.")
+                header_row = [x.strip() for x in lines[0].split(',')]
+                value_row = next(csv.reader([lines[1]]))
+                
+                header_dict = dict(zip(header_row, value_row))
+                
+                text_box_180 = header_dict.get('Textbox180', '').strip()
+                text_box_171 = header_dict.get('Textbox171', '').strip()
+                
+                logging.info(f"Header values found - TextBox180: '{text_box_180}', TextBox171: '{text_box_171}'")
+                
+                return text_box_180, text_box_171
+                
+        except Exception as e:
+            logging.error(f"Error reading header: {e}")
+            return '', ''
+
+    def clean_numeric(self, value):
+        """Clean numeric strings by removing commas and decimal points."""
+        if isinstance(value, str):
+            return value.replace(',', '').split('.')[0]
+        return value
+
+    def round_to_nearest_30_seconds(self, seconds):
+        """Round the given number of seconds to the nearest 30-second increment."""
+        try:
+            if pd.isna(seconds) or not str(seconds).strip():
+                return 0
+            return round(float(seconds) / 15) * 15
+        except (ValueError, TypeError) as e:
+            logging.warning(f"Error rounding seconds '{seconds}': {e}")
+            return 0
+
+    def load_and_clean_data(self, file_path: str) -> Optional[pd.DataFrame]:
+        """Load data from the selected input file and perform initial transformations."""
+        try:
+            logging.info(f"Loading data from {file_path}")
+            
+            # Read the main data
+            df = pd.read_csv(file_path, skiprows=3)
+            original_count = len(df)
+            
+            # Drop empty rows
+            df = df.dropna(how='all')
+            if len(df) < original_count:
+                logging.warning(f"Dropped {original_count - len(df)} empty rows")
+            
+            # Filter required columns
+            required_columns = ['id_contrattirighe', 'timerange2', 'dateschedule']
+            before_required = len(df)
+            df = df[df[required_columns].notna().all(axis=1)]
+            if len(df) < before_required:
+                logging.warning(f"Dropped {before_required - len(df)} rows with missing required values")
+            
+            # Filter out Textbox rows
+            df = df[~df['IMPORTO2'].astype(str).str.contains('Textbox', na=False)]
+            df = df[df.columns[~df.columns.str.contains('Textbox97|tot|Textbox61|Textbox53')]]
+            
+            # Clean numeric fields
+            df['id_contrattirighe'] = df['id_contrattirighe'].apply(self.clean_numeric)
+            if 'Textbox14' in df.columns:
+                df['Textbox14'] = df['Textbox14'].apply(self.clean_numeric)
+            
+            # Rename columns
+            column_mapping = {
+                'id_contrattirighe': 'Line',
+                'Textbox14': '#',
+                'duration3': 'Length',
+                'IMPORTO2': 'Gross Rate',
+                'nome2': 'Market',
+                'dateschedule': 'Air Date',
+                'airtimep': 'Program',
+                'bookingcode2': 'Media'
+            }
+            
+            logging.info(f"Available columns before renaming: {df.columns.tolist()}")
+            rename_dict = {k: v for k, v in column_mapping.items() if k in df.columns}
+            df = df.rename(columns=rename_dict)
+            logging.info(f"Columns after renaming: {df.columns.tolist()}")
+            
+            # Split timerange2
+            if 'timerange2' in df.columns:
+                df[['Time In', 'Time Out']] = df['timerange2'].str.split('-', expand=True)
+            
+            # Validate required columns after renaming
+            df = df[df['Line'].notna()]
+            
+            if df.empty:
+                raise ProcessingError("No valid data rows found after cleaning")
+                
+            return df
+            
+        except Exception as e:
+            logging.error(f"Error in load_and_clean_data: {str(e)}")
+            raise
+
+    def generate_billcode(self, text_box_180: str, text_box_171: str) -> str:
+        """Combine Textbox180 and Textbox171 for billcode."""
+        if text_box_180 and text_box_171:
+            return f"{text_box_180}:{text_box_171}"
+        elif text_box_171:
+            return text_box_171
+        elif text_box_180:
+            return text_box_180
+        return ''
+
+    def apply_transformations(self, df: pd.DataFrame, text_box_180: str, 
+                            text_box_171: str) -> pd.DataFrame:
+        """Apply transformations including billcode."""
+        try:
+            # Set billcode
+            billcode = self.generate_billcode(text_box_180, text_box_171)
+            df['Bill Code'] = billcode
+            
+            # Check Market column
+            if 'Market' not in df.columns:
+                logging.error("Market column not found in DataFrame")
+                logging.info(f"Available columns: {df.columns.tolist()}")
+                raise KeyError("Market column not found in DataFrame")
+            
+            # Apply market replacements
+            logging.info(f"Applying market replacements: {self.config.market_replacements}")
+            df['Market'] = df['Market'].replace(self.config.market_replacements)
+            
+            # Transform Gross Rate
+            if 'Gross Rate' in df.columns:
+                df['Gross Rate'] = df['Gross Rate'].astype(str).str.replace('$', '').str.replace(',', '')
+                df['Gross Rate'] = pd.to_numeric(df['Gross Rate'], errors='coerce').fillna(0).map("${:,.2f}".format)
+            
+            # Transform Length
+            if 'Length' in df.columns:
+                df['Length'] = df['Length'].apply(self.round_to_nearest_30_seconds)
+                df['Length'] = pd.to_timedelta(df['Length'], unit='s').apply(lambda x: str(x).split()[-1].zfill(8))
+            
+            # Transform Line and #
+            if 'Line' in df.columns:
+                df['Line'] = pd.to_numeric(df['Line'], errors='coerce').fillna(0).astype(int)
+            
+            if '#' in df.columns:
+                df['#'] = pd.to_numeric(df['#'], errors='coerce').fillna(0).astype(int)
+            
+            return df
+            
+        except Exception as e:
+            logging.error(f"Error in transformations: {str(e)}")
+            raise
+
+    def prompt_for_user_inputs(self) -> Dict:
+        """Prompt the user for processing parameters."""
+        print("\n" + "-"*80)
+        print("Additional Information Needed".center(80))
+        print("-"*80)
+        
+        # Get Sales Person
+        sales_people = self.config.sales_people
+        print("\n1. Sales Person:")
+        for idx, person in enumerate(sales_people, 1):
+            print(f"   [{idx}] {person}")
+            
+        while True:
+            try:
+                choice = int(input("\nSelect sales person (enter number): "))
+                if 1 <= choice <= len(sales_people):
+                    sales_person = sales_people[choice-1]
                     break
+                print(f"❌ Please enter a number between 1 and {len(sales_people)}")
+            except ValueError:
+                print("❌ Please enter a valid number")
+        
+        # Billing Type
+        print("\n2. Billing Type:")
+        print("   [C] Calendar")
+        print("   [B] Broadcast")
+        while True:
+            billing_input = input("\nSelect billing type (C/B): ").strip().upper()
+            if billing_input in ['C', 'B']:
+                billing_type = "Calendar" if billing_input == 'C' else "Broadcast"
+                break
+            print("❌ Please enter 'C' for Calendar or 'B' for Broadcast")
+        
+        # Revenue Type
+        print("\n3. Revenue Type:")
+        print("   [B] Branded Content")
+        print("   [D] Direct Response")
+        print("   [I] Internal Ad Sales")
+        print("   [P] Paid Programming")
+        while True:
+            revenue_input = input("\nSelect revenue type (B/D/I/P): ").strip().upper()
+            if revenue_input in ['B', 'D', 'I', 'P']:
+                revenue_types = {
+                    'B': "Branded Content",
+                    'D': "Direct Response",
+                    'I': "Internal Ad Sales",
+                    'P': "Paid Programming"
+                }
+                revenue_type = revenue_types[revenue_input]
+                break
+            print("❌ Please enter 'B', 'D', 'I', or 'P'")
+        
+        # Agency Type and Fee
+        print("\n4. Order Type:")
+        print("   [A] Agency")
+        print("   [N] Non-Agency")
+        print("   [T] Trade")
+        
+        agency_fee = None
+        while True:
+            agency_input = input("\nSelect order type (A/N/T): ").strip().upper()
+            if agency_input in ['A', 'N', 'T']:
+                agency_types = {
+                    'A': "Agency",
+                    'N': "Non-Agency",
+                    'T': "Trade"
+                }
+                agency_flag = agency_types[agency_input]
+                
+                if agency_input == 'A':
+                    print("\n5. Agency Fee Type:")
+                    print("   [S] Standard (15%)")
+                    print("   [C] Custom")
+                    while True:
+                        fee_type = input("\nSelect fee type (S/C): ").strip().upper()
+                        if fee_type == 'S':
+                            agency_fee = 0.15
+                            break
+                        elif fee_type == 'C':
+                            while True:
+                                try:
+                                    custom_fee = float(input("\nEnter custom fee percentage (without % symbol): "))
+                                    if 0 <= custom_fee <= 100:
+                                        agency_fee = custom_fee / 100
+                                        break
+                                    print("❌ Please enter a percentage between 0 and 100")
+                                except ValueError:
+                                    print("❌ Please enter a valid number")
+                            break
+                        print("❌ Please enter 'S' for Standard or 'C' for Custom")
+                break
+            print("❌ Please enter 'A' for Agency, 'N' for Non-Agency, or 'T' for Trade")
+        
+        print("\n✅ Information collected successfully!")
+        return {
+            "billing_type": billing_type,
+            "revenue_type": revenue_type,
+            "agency_flag": agency_flag,
+            "sales_person": sales_person,
+            "agency_fee": agency_fee
+        }
     
-    except KeyboardInterrupt:
-        print("\n\nProgram interrupted by user. Exiting...")
-        sys.exit(0)
-    except Exception as e:
-        print(f"\n❌ An unexpected error occurred: {str(e)}")
-        sys.exit(1)
+    def prompt_for_language(self) -> str:
+        """Prompt the user to select a language from the configured options."""
+        print("\n" + "-"*80)
+        print("Language Selection".center(80))
+        print("-"*80)
+        
+        print("\nAvailable language options:")
+        for idx, lang in enumerate(self.config.language_options, 1):
+            print(f"   [{idx}] {lang}")
+        
+        while True:
+            try:
+                choice = input("\nSelect language (enter number): ").strip()
+                if choice.lower() == 'q':
+                    print("\nExiting program...")
+                    sys.exit(0)
+                
+                choice = int(choice)
+                if 1 <= choice <= len(self.config.language_options):
+                    selected_lang = self.config.language_options[choice - 1]
+                    print(f"\n✅ Selected: {selected_lang}")
+                    return selected_lang
+                else:
+                    print(f"❌ Please enter a number between 1 and {len(self.config.language_options)}")
+            except ValueError:
+                print("❌ Please enter a valid number or 'q' to quit")
+
+    def prompt_for_type(self) -> str:
+        """Prompt the user to select a type from the configured options."""
+        print("\n" + "-"*80)
+        print("Type Selection".center(80))
+        print("-"*80)
+        
+        print("\nAvailable type options:")
+        for idx, type_opt in enumerate(self.config.type_options, 1):
+            print(f"   [{idx}] {type_opt}")
+        
+        while True:
+            try:
+                choice = input("\nSelect type (enter number): ").strip()
+                if choice.lower() == 'q':
+                    print("\nExiting program...")
+                    sys.exit(0)
+                
+                choice = int(choice)
+                if 1 <= choice <= len(self.config.type_options):
+                    selected_type = self.config.type_options[choice - 1]
+                    print(f"\n✅ Selected: {selected_type}")
+                    return selected_type
+                else:
+                    print(f"❌ Please enter a number between 1 and {len(self.config.type_options)}")
+            except ValueError:
+                print("❌ Please enter a valid number or 'q' to quit")
+
+    def prompt_for_affidavit(self) -> str:
+        """Prompt the user to select 'Y' or 'N' for the Affidavit column."""
+        print("\n" + "-"*80)
+        print("Affidavit Selection".center(80))
+        print("-"*80)
+        
+        while True:
+            affidavit_input = input("\nIs this an affidavit? (Y/N): ").strip().upper()
+            if affidavit_input in ['Y', 'N']:
+                print(f"\n✅ Selected: {affidavit_input}")
+                return affidavit_input
+            else:
+                print("❌ Please enter 'Y' for Yes or 'N' for No")
+
+    def apply_user_inputs(self, df: pd.DataFrame, billing_type: str, revenue_type: str, 
+                        agency_flag: str, sales_person: str, agency_fee: Optional[float],
+                        language: str, type_: str, affidavit: str) -> pd.DataFrame:
+        """Apply user input to the appropriate columns in the DataFrame."""
+        try:
+            logging.info("Applying user inputs to DataFrame...")
+            
+            # Add user input columns
+            df['Billing Type'] = billing_type
+            df['Revenue Type'] = revenue_type
+            df['Agency?'] = agency_flag
+            df['Sales Person'] = sales_person
+            df['Lang.'] = language
+            df['Type'] = type_
+            df['Affidavit?'] = affidavit  # Add this line
+
+            # Initialize Broker Fees column
+            df['Broker Fees'] = None
+
+            # Ensure all required columns exist
+            logging.info("Ensuring all required columns exist...")
+            for col in self.config.final_columns:
+                if col not in df.columns:
+                    logging.info(f"Adding missing column: {col}")
+                    df[col] = None
+            
+            # Reorder columns according to config
+            logging.info("Reordering columns according to configuration...")
+            try:
+                df = df[self.config.final_columns]
+            except KeyError as e:
+                missing_cols = [col for col in self.config.final_columns if col not in df.columns]
+                logging.error(f"Missing columns: {missing_cols}")
+                raise KeyError(f"Missing required columns: {missing_cols}")
+            
+            logging.info("Successfully applied user inputs!")
+            return df
+            
+        except Exception as e:
+            logging.error(f"Error applying user inputs: {str(e)}")
+            raise
+    
+    def save_output_file(self, df: pd.DataFrame, input_file: str, 
+                        user_inputs: Dict) -> str:
+        """Save the processed DataFrame to an Excel file."""
+        try:
+            # Define output file name
+            filename_base = os.path.splitext(os.path.basename(input_file))[0]
+            timestamp = datetime.now().strftime("%Y-%m-%d")
+            output_file = os.path.join(
+                self.config.paths.output_dir, 
+                f"{filename_base}_Processed_{timestamp}.xlsx"
+            )
+
+            self.save_to_excel(
+                df, 
+                self.config.paths.template_path, 
+                output_file, 
+                user_inputs.get('agency_fee')
+            )
+            
+            logging.info(f"Successfully saved output to: {output_file}")
+            return output_file
+            
+        except Exception as e:
+            logging.error(f"Error saving output file: {e}")
+            raise
+
+
+    def save_to_excel(self, df: pd.DataFrame, template_path: str, 
+                    output_path: str, agency_fee: Optional[float] = 0.15):
+        """Save DataFrame to Excel while preserving template formulas."""
+        try:
+            logging.info(f"Loading template from: {template_path}")
+            workbook = load_workbook(template_path, data_only=False)
+            sheet = workbook.active
+            
+            # Get column indices from config
+            columns = self.config.final_columns
+            
+            # Fix 2: Pre-calculate frequently used indices
+            market_col = len(columns)  # Market is last column
+            gross_rate_col = columns.index('Gross Rate') + 1
+            agency_col = columns.index('Agency?') + 1
+            
+            # Define special columns
+            formula_columns = {3, 4, 19}  # C, D, S
+            broker_fees_col = 20  # T
+            
+            # Store original formulas from template
+            template_formulas = {}
+            for col in formula_columns:
+                template_formulas[col] = sheet.cell(row=2, column=col).value if sheet.cell(row=2, column=col).value else None
+            
+            # Write headers
+            for col_num, column_title in enumerate(columns, 1):
+                sheet.cell(row=1, column=col_num, value=column_title)
+
+            # Write data while preserving formulas
+            for row_num, row_data in enumerate(df.values, 2):
+                for col_num, cell_value in enumerate(row_data, 1):
+                    cell = sheet.cell(row=row_num, column=col_num)
+                    
+                    # Handle special columns in clear order
+                    if col_num in formula_columns:
+                        if template_formulas[col_num]:
+                            cell.value = template_formulas[col_num]
+                    elif col_num == broker_fees_col and agency_fee is not None:
+                        if row_data[agency_col - 1] == 'Agency':
+                            from openpyxl.utils import get_column_letter
+                            cell.value = f'={get_column_letter(gross_rate_col)}{row_num}*{agency_fee}'
+                            cell.number_format = '$#,##0.00'
+                    elif col_num == market_col:
+                        market_value = str(cell_value) if cell_value else ""
+                        cell.value = self.config.market_replacements.get(market_value, market_value)
+                    else:
+                        try:
+                            column_name = columns[col_num - 1]
+                            if column_name in ['Gross Rate', 'Spot Value', 'Station Net']:
+                                if cell_value and str(cell_value).strip():
+                                    clean_value = str(cell_value).replace('$', '').replace(',', '')
+                                    try:
+                                        cell.value = float(clean_value)
+                                        cell.number_format = '$#,##0.00'
+                                    except ValueError:
+                                        logging.warning(f"Could not convert {cell_value} to float")
+                                        cell.value = cell_value
+                            else:
+                                cell.value = cell_value
+                        except Exception as e:
+                            logging.error(f"Error writing cell at row {row_num}, col {col_num}: {e}")
+                            cell.value = cell_value
+
+            # Remove excess rows while preserving formulas
+            last_data_row = len(df) + 1
+            if sheet.max_row > last_data_row:
+                sheet.delete_rows(last_data_row + 1, sheet.max_row - last_data_row)
+            
+            # Ensure output directory exists
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
+            workbook.save(output_path)
+            logging.info("Excel file saved successfully with formulas preserved")
+            
+        except Exception as e:
+            logging.error(f"Error saving to Excel: {str(e)}")
+            raise
+
+    def generate_processing_summary(self, df: pd.DataFrame, input_file: str,
+                                output_file: str, user_inputs: Dict) -> Dict:
+        """Generate comprehensive summary of the processing results."""
+        try:
+            # Convert date column to datetime
+            df['Air Date'] = pd.to_datetime(df['Air Date'])
+            
+            # Convert Gross Rate to numeric for calculations
+            gross_values = pd.to_numeric(
+                df['Gross Rate'].str.replace('$', '').str.replace(',', ''),
+                errors='coerce'
+            ).fillna(0)
+            
+            # Calculate spots by day of week
+            df['Day_of_Week'] = df['Air Date'].dt.day_name()
+            spots_by_day = df['Day_of_Week'].value_counts().to_dict()
+            
+            summary = {
+                "processing_info": {
+                    "timestamp": datetime.now().isoformat(),
+                    "input_file": input_file,
+                    "output_file": output_file,
+                    "user_inputs": user_inputs
+                },
+                "overall_metrics": {
+                    "total_spots": len(df),
+                    "total_gross_value": float(gross_values.sum()),
+                    "average_spot_value": float(gross_values.mean()),
+                    "unique_programs": len(df['Program'].unique()),
+                },
+                "date_range": {
+                    "earliest": df['Air Date'].min().isoformat(),
+                    "latest": df['Air Date'].max().isoformat(),
+                    "total_days": (df['Air Date'].max() - df['Air Date'].min()).days + 1
+                },
+                "breakdowns": {
+                    "markets": df['Market'].value_counts().to_dict(),
+                    "media_types": df['Media'].value_counts().to_dict(),
+                    "spots_by_day": spots_by_day,
+                    "programs": df['Program'].value_counts().to_dict()
+                }
+            }
+            
+            logging.info(f"Generated summary for {input_file}")
+            return summary
+            
+        except Exception as e:
+            logging.error(f"Error generating summary: {e}")
+            raise
+
+    def process_file(self, file_path: str, user_inputs: Optional[Dict] = None) -> ProcessingResult:
+        """Process a single input file with enhanced error handling."""
+        filename = os.path.basename(file_path)
+        logging.info(f"###### Starting processing of {filename} ######")
+        
+        try:
+            # Extract header values
+            logging.info("Extracting header values...")
+            text_box_180, text_box_171 = self.extract_header_values(file_path)
+            
+            # Load and clean data
+            logging.info("Loading and cleaning data...")
+            df = self.load_and_clean_data(file_path)
+            
+            # Apply transformations
+            logging.info("Applying transformations...")
+            df = self.apply_transformations(df, text_box_180, text_box_171)
+            
+            # Get user inputs if not provided
+            if user_inputs is None:
+                logging.info("Collecting user inputs...")
+                user_inputs = self.prompt_for_user_inputs()
+                # Add language selection
+                language = self.prompt_for_language()
+                user_inputs['language'] = language
+                # Add type selection
+                type_ = self.prompt_for_type()
+                user_inputs['type'] = type_
+                # Add affidavit selection
+                affidavit = self.prompt_for_affidavit()
+                user_inputs['affidavit'] = affidavit
+            
+            # Apply user inputs
+            logging.info("Applying user inputs...")
+            df = self.apply_user_inputs(
+                df,
+                billing_type=user_inputs['billing_type'],
+                revenue_type=user_inputs['revenue_type'],
+                agency_flag=user_inputs['agency_flag'],
+                sales_person=user_inputs['sales_person'],
+                agency_fee=user_inputs['agency_fee'],
+                language=user_inputs['language'],
+                type_=user_inputs['type'],
+                affidavit=user_inputs['affidavit']  # Add this line
+            )
+            
+            # Save output file
+            logging.info("Saving output file...")
+            output_file = self.save_output_file(df, file_path, user_inputs)
+            
+            # Generate and save summary
+            logging.info("Generating processing summary...")
+            summary = self.generate_processing_summary(df, file_path, output_file, user_inputs)
+            
+            return ProcessingResult(
+                filename=filename,
+                success=True,
+                output_file=output_file,
+                metrics=summary
+            )
+            
+        except Exception as e:
+            logging.error(f"Error processing {filename}: {str(e)}")
+            return ProcessingResult(
+                filename=filename,
+                success=False,
+                error_message=str(e)
+            )
+
+    def process_batch(self, files: List[str], show_progress: bool = True) -> Dict[str, List[ProcessingResult]]:
+        """Process multiple files with progress tracking and error recovery."""
+        successful = []
+        failed = []
+        
+        # Ask if all files share the same user inputs
+        print("\n" + "-"*80)
+        print("Batch Processing Setup".center(80))
+        print("-"*80)
+        shared_inputs = input("\nDo all files in this batch share the same user inputs? (Y/N): ").strip().lower()
+        
+        user_inputs = None
+        if shared_inputs == 'y':
+            print("\nCollecting user inputs for the entire batch...")
+            user_inputs = self.prompt_for_user_inputs()
+            # Add language selection
+            language = self.prompt_for_language()
+            user_inputs['language'] = language
+            # Add type selection
+            type_ = self.prompt_for_type()
+            user_inputs['type'] = type_
+            # Add affidavit selection
+            affidavit = self.prompt_for_affidavit()
+            user_inputs['affidavit'] = affidavit
+        
+        files_iter = tqdm(files, desc="Processing files") if show_progress else files
+        
+        for file_path in files_iter:
+            if shared_inputs == 'y':
+                # Use the collected user inputs for all files
+                result = self.process_file(file_path, user_inputs)
+            else:
+                # Prompt for user inputs for each file
+                result = self.process_file(file_path)
+            
+            if result.success:
+                successful.append(result)
+            else:
+                failed.append(result)
+            
+            # Save interim results
+            self._save_interim_results(successful, failed)
+
+        self._display_batch_summary(successful, failed)
+        return {"successful": successful, "failed": failed}
+
+    def _save_interim_results(self, successful: List[ProcessingResult], 
+                            failed: List[ProcessingResult]):
+        """Save interim results to protect against crashes."""
+        interim_file = Path(self.config.paths.output_dir) / 'interim_results.json'
+        
+        results = {
+            "timestamp": datetime.now().isoformat(),
+            "successful": [vars(r) for r in successful],
+            "failed": [vars(r) for r in failed]
+        }
+        
+        with open(interim_file, 'w') as f:
+            json.dump(results, f, indent=2)
+
+    def _display_batch_summary(self, successful: List[ProcessingResult], 
+                             failed: List[ProcessingResult]):
+        """Display a user-friendly summary of batch processing results."""
+        print("\n" + "="*80)
+        print("Batch Processing Summary".center(80))
+        print("="*80)
+        
+        # Success/failure counts
+        total = len(successful) + len(failed)
+        success_rate = (len(successful) / total * 100) if total > 0 else 0
+        
+        print(f"\nTotal files processed: {total}")
+        print(f"Successfully processed: {len(successful)} ({success_rate:.1f}%)")
+        print(f"Failed to process: {len(failed)}")
+        
+        # Display failures
+        if failed:
+            print("\nFailed Files:")
+            for result in failed:
+                print(f"❌ {result.filename}")
+                print(f"   Error: {result.error_message}")
+        
+        # Display warnings
+        if any(r.warnings for r in successful):
+            print("\nWarnings:")
+            for result in successful:
+                if result.warnings:
+                    print(f"⚠️ {result.filename}:")
+                    for warning in result.warnings:
+                        print(f"   - {warning}")
+
+        # Display output locations
+        if successful:
+            print("\nProcessed Files:")
+            for result in successful:
+                print(f"✅ {result.filename} -> {result.output_file}")
+
+        print(f"\nDetailed logs available at: {self.log_file}")
+
+    def main(self):
+        """Main function to control the flow of the program."""
+        self.print_header()
+        
+        try:
+            files = self.list_files()
+            if not files:
+                print("No files found to process. Please add files and try again.")
+                return
+
+            choice = self.select_processing_mode()
+
+            if choice == 'A':
+                print("\n🔄 Processing all files automatically...")
+                file_paths = [os.path.join(self.config.paths.input_dir, f) for f in files]
+                results = self.process_batch(file_paths)
+                
+            elif choice == 'S':
+                while True:
+                    file_path = self.select_input_file(files)
+                    if file_path:
+                        results = self.process_batch([file_path], show_progress=False)
+                    
+                    print("\n" + "-"*80)
+                    cont = input("\nWould you like to process another file? (Y/N): ").strip().lower()
+                    if cont != 'y':
+                        print("\n✅ Processing complete! Thank you for using the tool.")
+                        break
+
+        except KeyboardInterrupt:
+            print("\n\nProgram interrupted by user. Saving interim results...")
+            self._save_interim_results(self.results, [])
+            print("Interim results saved. Exiting...")
+            sys.exit(0)
+        except Exception as e:
+            logging.error(f"Unexpected error: {str(e)}")
+            print(f"\n❌ An unexpected error occurred. Please check the log file: {self.log_file}")
+            sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    processor = EtereBridge()
+    processor.main()

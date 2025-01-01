@@ -3,6 +3,7 @@ import sys
 import configparser
 from dataclasses import dataclass
 from typing import Dict, List
+from config_setup import setup_logging
 
 @dataclass
 class Paths:
@@ -19,6 +20,8 @@ class AppConfig:
     market_replacements: Dict[str, str]
     final_columns: List[str]
     sales_people: List[str]
+    language_options: List[str]
+    type_options: List[str]
 
 class ConfigurationError(Exception):
     """Custom exception for configuration-related errors."""
@@ -37,6 +40,11 @@ class ConfigManager:
         self.config_path = os.path.join(self.script_dir, config_file)
         self.config = self._load_config_file()
         self.app_config = self._create_app_config()
+
+    def setup_logging(self) -> str:
+        """Set up logging using the configured output directory."""
+        return setup_logging(self.app_config.paths.output_dir)
+
 
     def _load_config_file(self) -> configparser.ConfigParser:
         """Load and validate the configuration file.
@@ -123,12 +131,20 @@ class ConfigManager:
         
         # Load sales people
         sales_people = self.config['Sales']['sales_people'].split(',')
+
+        # Load language options
+        language_options = [opt.strip() for opt in self.config['Languages']['options'].split(',')]
+
+        # Load type options
+        type_options = [opt.strip() for opt in self.config['Type']['options'].split(',')]
         
         return AppConfig(
             paths=paths,
             market_replacements=market_replacements,
             final_columns=final_columns,
-            sales_people=sales_people
+            sales_people=sales_people,
+            language_options=language_options,
+            type_options=type_options
         )
 
     def get_config(self) -> AppConfig:
