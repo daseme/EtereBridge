@@ -80,6 +80,19 @@ Log File: {log_file}
                 return choice
             print("❌ Invalid choice. Please enter 'A' for all files or 'S' to select files.")
 
+    def get_worldlink_defaults(self) -> Dict:
+        """Return default values for WorldLink orders."""
+        return {
+            "billing_type": "Broadcast",
+            "revenue_type": "Direct Response",
+            "agency_flag": "Agency",
+            "sales_person": "House",
+            "agency_fee": 0.15,  # Standard 15%
+            "type": "COM",
+            "affidavit": "Y",
+            "is_worldlink": True  # Flag to identify WorldLink orders
+        }
+
     def select_input_file(self, files: List[str]) -> Optional[str]:
         """Prompt the user to select a file from the input directory."""
         print("\n" + "-"*80)
@@ -373,24 +386,9 @@ Log File: {log_file}
         return row_languages
 
     def apply_user_inputs(self, df: pd.DataFrame, billing_type: str, revenue_type: str, 
-                        agency_flag: str, sales_person: str, agency_fee: Optional[float],
-                        language: Dict, type_: str, affidavit: str) -> pd.DataFrame:
-        """Apply user input to the appropriate columns in the DataFrame.
-        
-        Args:
-            df: Input DataFrame to modify
-            billing_type: Calendar or Broadcast
-            revenue_type: Type of revenue (e.g., "Direct Response")
-            agency_flag: Agency status ("Agency", "Non-Agency", or "Trade")
-            sales_person: Name of sales person
-            agency_fee: Fee percentage as decimal (e.g., 0.15 for 15%) or None
-            language: Dictionary mapping row indices to language codes
-            type_: Selected type option
-            affidavit: Y/N flag for affidavit
-            
-        Returns:
-            Modified DataFrame with user inputs applied
-        """
+                            agency_flag: str, sales_person: str, agency_fee: Optional[float],
+                            language: Dict, type_: str, affidavit: str, is_worldlink: bool = False) -> pd.DataFrame:
+        """Apply user input to the appropriate columns in the DataFrame."""
         try:
             logging.info("Applying user inputs to DataFrame...")
             
@@ -399,16 +397,29 @@ Log File: {log_file}
             df['Revenue Type'] = revenue_type
             df['Agency?'] = agency_flag
             df['Sales Person'] = sales_person
-            df['Lang.'] = df.index.map(language)  # Map language codes from the dictionary
+            df['Lang.'] = df.index.map(language)
             df['Type'] = type_
             df['Affidavit?'] = affidavit
 
-            # Set Broker Fees based on agency flag and fee
+            # Handle WorldLink specific processing
+            if is_worldlink:
+                logging.info("Processing WorldLink order specific requirements...")
+                # Ensure Market column exists before copying
+                if 'Market' in df.columns:
+                    logging.info("Copying Market data to Makegood column")
+                    # Create Makegood column if it doesn't exist
+                    if 'Make Good' not in df.columns:
+                        df['Make Good'] = None
+                    # Copy Market data to Makegood
+                    df['Make Good'] = df['Market']
+                    logging.info("Successfully copied Market data to Make Good")
+                else:
+                    logging.warning("Market column not found in WorldLink order - cannot copy to Make Good")
+
+            # Handle agency fees
             if agency_flag == "Agency" and agency_fee is not None:
                 try:
-                    # Convert Gross Rate to numeric for calculation
                     gross_rates = df['Gross Rate'].str.replace('$', '').str.replace(',', '').astype(float)
-                    # Calculate broker fees and format as currency
                     df['Broker Fees'] = gross_rates * agency_fee
                     df['Broker Fees'] = df['Broker Fees'].map('${:,.2f}'.format)
                     logging.info(f"Successfully calculated broker fees using {agency_fee:.1%} rate")
@@ -437,40 +448,16 @@ Log File: {log_file}
             
             logging.info("Successfully applied user inputs!")
             return df
-            
+                
         except Exception as e:
             logging.error(f"Error applying user inputs: {str(e)}")
-        raise
-    
-    def save_output_file(self, df: pd.DataFrame, input_file: str, 
-                        user_inputs: Dict) -> str:
-        """Save the processed DataFrame to an Excel file."""
-        try:
-            # Define output file name
-            filename_base = os.path.splitext(os.path.basename(input_file))[0]
-            timestamp = datetime.now().strftime("%Y-%m-%d")
-            output_file = os.path.join(
-                self.config.paths.output_dir, 
-                f"{filename_base}_Processed_{timestamp}.xlsx"
-            )
-
-            self.save_to_excel(
-                df, 
-                self.config.paths.template_path, 
-                output_file, 
-                user_inputs.get('agency_fee')
-            )
-            
-            logging.info(f"Successfully saved output to: {output_file}")
-            return output_file
-            
-        except Exception as e:
-            logging.error(f"Error saving output file: {e}")
             raise
 
 
-    def save_to_excel(self, df: pd.DataFrame, template_path: str, output_path: str, agency_fee: Optional[float] = 0.15):
+    def save_to_excel(self, df: pd.DataFrame, output_path: str, agency_fee: Optional[float] = 0.15):
         try:
+            # Get template path using correct attribute name
+            template_path = self.config.paths.template_path
             logging.info(f"Loading template from: {template_path}")
             workbook = load_workbook(template_path, data_only=False)
             sheet = workbook.active
@@ -637,6 +624,7 @@ Log File: {log_file}
                 # Add affidavit selection
                 affidavit = self.prompt_for_affidavit()
                 user_inputs['affidavit'] = affidavit
+                user_inputs['is_worldlink'] = False  # Default to False for manual input
             
             # Convert row_languages (Series) to a dictionary
             language_dict = row_languages.to_dict() if not row_languages.empty else {}
@@ -653,39 +641,79 @@ Log File: {log_file}
                 agency_flag=user_inputs['agency_flag'],
                 sales_person=user_inputs['sales_person'],
                 agency_fee=user_inputs['agency_fee'],
-                language=language_dict,  # Pass the dictionary of languages
+                language=language_dict,
                 type_=user_inputs['type'],
-                affidavit=user_inputs['affidavit']
+                affidavit=user_inputs['affidavit'],
+                is_worldlink=user_inputs.get('is_worldlink', False)
             )
             
             # Save output file
             logging.info("Saving output file...")
-            output_file = self.save_output_file(df, file_path, user_inputs)
+            # Generate output filename
+            output_filename = f"processed_{os.path.splitext(filename)[0]}.xlsx"
+            output_path = os.path.join(self.config.paths.output_dir, output_filename)
+
+            
+            # Save using save_to_excel instead of save_output_file
+            self.save_to_excel(df, output_path, user_inputs.get('agency_fee'))
             
             # Generate and save summary
             logging.info("Generating processing summary...")
-            summary = self.generate_processing_summary(df, file_path, output_file, user_inputs)
+            summary = self.generate_processing_summary(df, file_path, output_path, user_inputs)
             
             # Add language detection info to summary
             language_distribution = row_languages.value_counts().to_dict() if not row_languages.empty else {}
             summary["language_info"] = {
                 "detected_languages": detected_counts,
-                "language_distribution": language_distribution  # Already a dictionary
+                "language_distribution": language_distribution
             }
+            
+            # Add WorldLink status to summary if applicable
+            if user_inputs.get('is_worldlink', False):
+                summary["processing_info"]["worldlink_order"] = True
+                if 'Market' in df.columns:
+                    summary["processing_info"]["market_to_makegood"] = "copied"
+                else:
+                    summary["processing_info"]["market_to_makegood"] = "failed - Market column not found"
             
             return ProcessingResult(
                 filename=filename,
                 success=True,
-                output_file=output_file,
+                output_file=output_path,
                 metrics=summary
             )
             
-        except Exception as e:
-            logging.error(f"Error processing {filename}: {str(e)}", exc_info=True)
+        except FileNotFoundError as e:
+            error_msg = f"File not found: {filename}"
+            logging.error(error_msg)
             return ProcessingResult(
                 filename=filename,
                 success=False,
-                error_message=str(e)
+                error_message=error_msg
+            )
+        except pd.errors.EmptyDataError as e:
+            error_msg = f"File is empty: {filename}"
+            logging.error(error_msg)
+            return ProcessingResult(
+                filename=filename,
+                success=False,
+                error_message=error_msg
+            )
+        except ProcessingError as e:
+            error_msg = f"Processing error in {filename}: {str(e)}"
+            logging.error(error_msg)
+            return ProcessingResult(
+                filename=filename,
+                success=False,
+                error_message=error_msg
+            )
+        except Exception as e:
+            error_msg = f"Unexpected error processing {filename}: {str(e)}"
+            logging.error(error_msg, exc_info=True)
+            return ProcessingResult(
+                filename=filename,
+                success=False,
+                error_message=error_msg
             )
 
     def process_batch(self, files: List[str], show_progress: bool = True) -> Dict[str, List[ProcessingResult]]:
@@ -693,23 +721,30 @@ Log File: {log_file}
         successful = []
         failed = []
         
-        # Ask if all files share the same user inputs
+        # First, check if this is a WorldLink batch
         print("\n" + "-"*80)
         print("Batch Processing Setup".center(80))
         print("-"*80)
-        shared_inputs = input("\nDo all files in this batch share the same user inputs? (Y/N): ").strip().lower()
+        
+        is_worldlink = input("\nIs this a batch of WorldLink orders? (Y/N): ").strip().lower() == 'y'
         
         base_user_inputs = None
-        if shared_inputs == 'y':
-            print("\nCollecting shared user inputs for the batch...")
-            base_user_inputs = self.prompt_for_user_inputs()
-            # Add type selection
-            type_ = self.prompt_for_type()
-            base_user_inputs['type'] = type_
-            # Add affidavit selection
-            affidavit = self.prompt_for_affidavit()
-            base_user_inputs['affidavit'] = affidavit
-            # Note: Language will be detected per file
+        if is_worldlink:
+            print("\nUsing WorldLink default settings...")
+            base_user_inputs = self.get_worldlink_defaults()
+            logging.info("Using WorldLink default settings for batch processing")
+        else:
+            # Existing logic for non-WorldLink batches
+            shared_inputs = input("\nDo all files in this batch share the same user inputs? (Y/N): ").strip().lower()
+            if shared_inputs == 'y':
+                print("\nCollecting shared user inputs for the batch...")
+                base_user_inputs = self.prompt_for_user_inputs()
+                # Add type selection
+                type_ = self.prompt_for_type()
+                base_user_inputs['type'] = type_
+                # Add affidavit selection
+                affidavit = self.prompt_for_affidavit()
+                base_user_inputs['affidavit'] = affidavit
         
         files_iter = tqdm(files, desc="Processing files") if show_progress else files
         
