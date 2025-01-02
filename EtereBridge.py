@@ -375,7 +375,22 @@ Log File: {log_file}
     def apply_user_inputs(self, df: pd.DataFrame, billing_type: str, revenue_type: str, 
                         agency_flag: str, sales_person: str, agency_fee: Optional[float],
                         language: Dict, type_: str, affidavit: str) -> pd.DataFrame:
-        """Apply user input to the appropriate columns in the DataFrame."""
+        """Apply user input to the appropriate columns in the DataFrame.
+        
+        Args:
+            df: Input DataFrame to modify
+            billing_type: Calendar or Broadcast
+            revenue_type: Type of revenue (e.g., "Direct Response")
+            agency_flag: Agency status ("Agency", "Non-Agency", or "Trade")
+            sales_person: Name of sales person
+            agency_fee: Fee percentage as decimal (e.g., 0.15 for 15%) or None
+            language: Dictionary mapping row indices to language codes
+            type_: Selected type option
+            affidavit: Y/N flag for affidavit
+            
+        Returns:
+            Modified DataFrame with user inputs applied
+        """
         try:
             logging.info("Applying user inputs to DataFrame...")
             
@@ -388,8 +403,21 @@ Log File: {log_file}
             df['Type'] = type_
             df['Affidavit?'] = affidavit
 
-            # Initialize Broker Fees column
-            df['Broker Fees'] = None
+            # Set Broker Fees based on agency flag and fee
+            if agency_flag == "Agency" and agency_fee is not None:
+                try:
+                    # Convert Gross Rate to numeric for calculation
+                    gross_rates = df['Gross Rate'].str.replace('$', '').str.replace(',', '').astype(float)
+                    # Calculate broker fees and format as currency
+                    df['Broker Fees'] = gross_rates * agency_fee
+                    df['Broker Fees'] = df['Broker Fees'].map('${:,.2f}'.format)
+                    logging.info(f"Successfully calculated broker fees using {agency_fee:.1%} rate")
+                except Exception as e:
+                    logging.error(f"Error calculating broker fees: {str(e)}")
+                    df['Broker Fees'] = None
+            else:
+                df['Broker Fees'] = None
+                logging.info("No broker fees applied (non-agency or no fee specified)")
 
             # Ensure all required columns exist
             logging.info("Ensuring all required columns exist...")
@@ -412,7 +440,7 @@ Log File: {log_file}
             
         except Exception as e:
             logging.error(f"Error applying user inputs: {str(e)}")
-            raise
+        raise
     
     def save_output_file(self, df: pd.DataFrame, input_file: str, 
                         user_inputs: Dict) -> str:

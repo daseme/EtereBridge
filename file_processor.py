@@ -175,11 +175,11 @@ class FileProcessor:
             
             # Transform Gross Rate
             if 'Gross Rate' in df.columns:
-                logging.info(f"Gross Rate values before cleaning: {df['Gross Rate'].tolist()}")
+                
                 df['Gross Rate'] = df['Gross Rate'].fillna(0).astype(str).str.strip().str.replace('$', '').str.replace(',', '')
-                logging.info(f"Gross Rate values after cleaning: {df['Gross Rate'].tolist()}")
+                
                 df['Gross Rate'] = df['Gross Rate'].apply(self.safe_to_numeric).fillna(0)
-                logging.info(f"Gross Rate values after conversion: {df['Gross Rate'].tolist()}")
+                
                 df['Gross Rate'] = df['Gross Rate'].map("${:,.2f}".format)
             
             # Transform Length
