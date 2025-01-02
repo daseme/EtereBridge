@@ -441,9 +441,7 @@ Log File: {log_file}
             raise
 
 
-    def save_to_excel(self, df: pd.DataFrame, template_path: str, 
-                    output_path: str, agency_fee: Optional[float] = 0.15):
-        """Save DataFrame to Excel while preserving template formulas."""
+    def save_to_excel(self, df: pd.DataFrame, template_path: str, output_path: str, agency_fee: Optional[float] = 0.15):
         try:
             logging.info(f"Loading template from: {template_path}")
             workbook = load_workbook(template_path, data_only=False)
@@ -452,69 +450,78 @@ Log File: {log_file}
             # Get column indices from config
             columns = self.config.final_columns
             
-            # Fix 2: Pre-calculate frequently used indices
-            market_col = len(columns)  # Market is last column
-            gross_rate_col = columns.index('Gross Rate') + 1
-            agency_col = columns.index('Agency?') + 1
-            
-            # Define special columns
-            formula_columns = {3, 4, 19}  # C, D, S
-            broker_fees_col = 20  # T
-            
-            # Store original formulas from template
+            # Extract formulas and formatting from the second row of the template
             template_formulas = {}
-            for col in formula_columns:
-                template_formulas[col] = sheet.cell(row=2, column=col).value if sheet.cell(row=2, column=col).value else None
+            template_formatting = {}
+            for col in range(1, len(columns) + 1):
+                cell = sheet.cell(row=2, column=col)
+                if cell.value and str(cell.value).startswith('='):  # Check if it's a formula
+                    template_formulas[col] = cell.value
+                # Store formatting (style, number format, etc.)
+                template_formatting[col] = {
+                    'style': cell.style,
+                    'number_format': cell.number_format,
+                    'border': cell.border.copy(),  # Create a copy of the border
+                    'fill': cell.fill.copy(),      # Create a copy of the fill
+                    'font': cell.font.copy(),      # Create a copy of the font
+                    'alignment': cell.alignment.copy()  # Create a copy of the alignment
+                }
             
             # Write headers
             for col_num, column_title in enumerate(columns, 1):
                 sheet.cell(row=1, column=col_num, value=column_title)
-
-            # Write data while preserving formulas
+            
+            # Write data and apply formulas/formatting
             for row_num, row_data in enumerate(df.values, 2):
                 for col_num, cell_value in enumerate(row_data, 1):
                     cell = sheet.cell(row=row_num, column=col_num)
-                    
-                    # Handle special columns in clear order
-                    if col_num in formula_columns:
-                        if template_formulas[col_num]:
-                            cell.value = template_formulas[col_num]
-                    elif col_num == broker_fees_col and agency_fee is not None:
-                        if row_data[agency_col - 1] == 'Agency':
-                            from openpyxl.utils import get_column_letter
-                            cell.value = f'={get_column_letter(gross_rate_col)}{row_num}*{agency_fee}'
-                            cell.number_format = '$#,##0.00'
-                    elif col_num == market_col:
-                        market_value = str(cell_value) if cell_value else ""
-                        cell.value = self.config.market_replacements.get(market_value, market_value)
+                    if col_num in template_formulas:
+                        # Apply the formula to the new row
+                        formula = template_formulas[col_num]
+                        formula = formula.replace('2', str(row_num))  # Adjust row reference
+                        cell.value = formula
                     else:
-                        try:
-                            column_name = columns[col_num - 1]
-                            if column_name in ['Gross Rate', 'Spot Value', 'Station Net']:
-                                if cell_value and str(cell_value).strip():
-                                    clean_value = str(cell_value).replace('$', '').replace(',', '')
-                                    try:
-                                        cell.value = float(clean_value)
-                                        cell.number_format = '$#,##0.00'
-                                    except ValueError:
-                                        logging.warning(f"Could not convert {cell_value} to float")
-                                        cell.value = cell_value
-                            else:
-                                cell.value = cell_value
-                        except Exception as e:
-                            logging.error(f"Error writing cell at row {row_num}, col {col_num}: {e}")
-                            cell.value = cell_value
-
-            # Remove excess rows while preserving formulas
-            last_data_row = len(df) + 1
-            if sheet.max_row > last_data_row:
-                sheet.delete_rows(last_data_row + 1, sheet.max_row - last_data_row)
+                        cell.value = cell_value
+                    
+                    # Apply formatting from the template's second row
+                    if col_num in template_formatting:
+                        cell.style = template_formatting[col_num]['style']
+                        cell.number_format = template_formatting[col_num]['number_format']
+                        cell.border = template_formatting[col_num]['border']
+                        cell.fill = template_formatting[col_num]['fill']
+                        cell.font = template_formatting[col_num]['font']
+                        cell.alignment = template_formatting[col_num]['alignment']
+            
+            # Fix the Month column (column S)
+            month_col = columns.index('Month') + 1  # Get the column index for 'Month'
+            for row_num in range(2, len(df) + 2):  # Iterate over all rows
+                air_date_cell = sheet.cell(row=row_num, column=columns.index('Air Date') + 1)
+                if air_date_cell.value:  # Check if Air Date is valid
+                    try:
+                        # Calculate the month based on Air Date
+                        air_date = pd.to_datetime(air_date_cell.value)
+                        month_value = air_date.strftime('%b-%y')  # Format as 'Dec-24'
+                        sheet.cell(row=row_num, column=month_col, value=month_value)
+                    except Exception as e:
+                        logging.warning(f"Error calculating month for row {row_num}: {e}")
+                        sheet.cell(row=row_num, column=month_col, value="Invalid Date")
+                else:
+                    sheet.cell(row=row_num, column=month_col, value="No Date")
+            
+            # Set the Priority column (column U) to 4 for all rows
+            priority_col = columns.index('Priority') + 1  # Get the column index for 'Priority'
+            for row_num in range(2, len(df) + 2):  # Iterate over all rows
+                sheet.cell(row=row_num, column=priority_col, value=4)
+            
+            # Remove excess rows if the template has more rows than the CSV
+            if sheet.max_row > len(df) + 1:
+                sheet.delete_rows(len(df) + 2, sheet.max_row - (len(df) + 1))
             
             # Ensure output directory exists
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             
             workbook.save(output_path)
-            logging.info("Excel file saved successfully with formulas preserved")
+            logging.info("Excel file saved successfully with formulas, formatting, and Priority Number preserved")
             
         except Exception as e:
             logging.error(f"Error saving to Excel: {str(e)}")

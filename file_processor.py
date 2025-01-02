@@ -57,6 +57,24 @@ class FileProcessor:
             logging.warning(f"Error rounding seconds '{seconds}': {e}")
             return 0
 
+    def safe_to_numeric(self, value):
+        """
+        Safely convert a value to numeric, handling NaN and string "nan".
+        
+        Args:
+            value: The value to convert.
+        
+        Returns:
+            Numeric value or 0 if conversion fails.
+        """
+        try:
+            if pd.isna(value) or str(value).strip().lower() == "nan":
+                return 0
+            return pd.to_numeric(value, errors='raise')
+        except ValueError as e:
+            logging.warning(f"Failed to convert {value} to numeric: {e}")
+            return 0
+
     def load_and_clean_data(self, file_path: str) -> Optional[pd.DataFrame]:
         """
         Load data from the selected input file and perform initial transformations.
@@ -157,8 +175,12 @@ class FileProcessor:
             
             # Transform Gross Rate
             if 'Gross Rate' in df.columns:
-                df['Gross Rate'] = df['Gross Rate'].astype(str).str.replace('$', '').str.replace(',', '')
-                df['Gross Rate'] = pd.to_numeric(df['Gross Rate'], errors='coerce').fillna(0).map("${:,.2f}".format)
+                logging.info(f"Gross Rate values before cleaning: {df['Gross Rate'].tolist()}")
+                df['Gross Rate'] = df['Gross Rate'].fillna(0).astype(str).str.strip().str.replace('$', '').str.replace(',', '')
+                logging.info(f"Gross Rate values after cleaning: {df['Gross Rate'].tolist()}")
+                df['Gross Rate'] = df['Gross Rate'].apply(self.safe_to_numeric).fillna(0)
+                logging.info(f"Gross Rate values after conversion: {df['Gross Rate'].tolist()}")
+                df['Gross Rate'] = df['Gross Rate'].map("${:,.2f}".format)
             
             # Transform Length
             if 'Length' in df.columns:
