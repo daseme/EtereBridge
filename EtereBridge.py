@@ -84,7 +84,7 @@ Log File: {log_file}
         """Return default values for WorldLink orders."""
         return {
             "billing_type": "Broadcast",
-            "revenue_type": "Direct Response",
+            "revenue_type": "Direct Response Sales",
             "agency_flag": "Agency",
             "sales_person": "House",
             "agency_fee": 0.15,  # Standard 15%
@@ -196,7 +196,7 @@ Log File: {log_file}
         # Revenue Type
         print("\n3. Revenue Type:")
         print("   [B] Branded Content")
-        print("   [D] Direct Response")
+        print("   [D] Direct Response Sales")
         print("   [I] Internal Ad Sales")
         print("   [P] Paid Programming")
         while True:
@@ -204,7 +204,7 @@ Log File: {log_file}
             if revenue_input in ['B', 'D', 'I', 'P']:
                 revenue_types = {
                     'B': "Branded Content",
-                    'D': "Direct Response",
+                    'D': "Direct Response Sales",
                     'I': "Internal Ad Sales",
                     'P': "Paid Programming"
                 }
