@@ -155,15 +155,17 @@ Log File: {log_file}
 
     def apply_user_inputs(self, df: pd.DataFrame, billing_type: str, revenue_type: str, 
                             agency_flag: str, sales_person: str, agency_fee: Optional[float],
-                            language: Dict, type_: str, affidavit: str, estimate: str, 
+                            language: Dict, affidavit: str, estimate: str, 
                             is_worldlink: bool = False) -> pd.DataFrame:
         """
         Apply user input values to the DataFrame.
         
         Adds columns for billing type, revenue type, agency flag, sales person,
-        language, type, affidavit, and estimate, then handles WorldLink-specific
-        processing and broker fees. Ensures all required columns exist and orders them
-        according to configuration.
+        language, affidavit, and estimate, then handles WorldLink-specific
+        processing and broker fees. Also computes the Type column automatically:
+        - If the Gross Rate is blank or zero, Type is 'BNS'
+        - Otherwise, Type is 'COM'
+        Ensures all required columns exist and orders them according to configuration.
         """
         try:
             logging.info("Applying user inputs to DataFrame...")
@@ -174,11 +176,26 @@ Log File: {log_file}
             df['Agency?'] = agency_flag
             df['Sales Person'] = sales_person
             df['Lang.'] = df.index.map(language)
-            df['Type'] = type_
             df['Affidavit?'] = affidavit
             
             # Add the Estimate column from user input
             df['Estimate'] = estimate
+            
+            # Compute Type automatically from Gross Rate on a per-row basis.
+            def compute_type(row):
+                try:
+                    # Get the Gross Rate value (assumed formatted like "$0.00")
+                    value = row.get("Gross Rate", "$0")
+                    num = float(value.replace('$','').replace(',', ''))
+                    if num == 0:
+                        return "BNS"
+                    else:
+                        return "COM"
+                except Exception as e:
+                    logging.warning(f"Error computing type for row: {e}")
+                    return "BNS"
+            
+            df["Type"] = df.apply(compute_type, axis=1)
             
             # Handle WorldLink-specific processing
             if is_worldlink:
@@ -224,6 +241,11 @@ Log File: {log_file}
             
             logging.info("Successfully applied user inputs!")
             return df
+                        
+        except Exception as e:
+            logging.error(f"Error applying user inputs: {str(e)}")
+            raise
+
                     
         except Exception as e:
             logging.error(f"Error applying user inputs: {str(e)}")
@@ -387,8 +409,8 @@ Log File: {log_file}
                 sales_person=user_inputs['sales_person'],
                 agency_fee=user_inputs['agency_fee'],
                 language=language_dict,
-                type_=user_inputs['type'],
                 affidavit=user_inputs['affidavit'],
+                estimate=user_inputs['estimate'],
                 is_worldlink=user_inputs.get('is_worldlink', False)
             )
             

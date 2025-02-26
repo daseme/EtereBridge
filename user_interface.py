@@ -112,9 +112,10 @@ def collect_user_inputs(config):
     inputs["agency_flag"] = order_type
     inputs["agency_fee"] = agency_fee
     inputs["estimate"] = prompt_for_estimate()  # New prompt for estimate number
-    inputs["type"] = prompt_for_type(config)
+    # Type selection is now automatic—no prompt needed.
     inputs["affidavit"] = prompt_for_affidavit()
     return inputs
+
 
 def verify_languages(df: pd.DataFrame, language_info):
     """
