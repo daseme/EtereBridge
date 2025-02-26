@@ -2,6 +2,7 @@ import os
 import sys
 import logging
 import csv
+from copy import copy
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +13,7 @@ from dataclasses import dataclass, field
 from tqdm import tqdm
 from config_manager import config_manager
 from file_processor import FileProcessor
+from user_interface import collect_user_inputs, verify_languages  # Updated import
 
 @dataclass
 class ProcessingResult:
@@ -56,11 +58,9 @@ Log File: {log_file}
 
     def list_files(self) -> List[str]:
         """List all available files in the input directory."""
-        files = [f for f in os.listdir(self.config.paths.input_dir) 
-                if f.endswith('.csv')]
+        files = [f for f in os.listdir(self.config.paths.input_dir) if f.endswith('.csv')]
         if not files:
-            print("\n❌ No CSV files found in the input directory:", 
-                  self.config.paths.input_dir)
+            print("\n❌ No CSV files found in the input directory:", self.config.paths.input_dir)
             print("Please add your CSV files to this directory and try again.")
             sys.exit(1)
         return files
@@ -117,7 +117,6 @@ Log File: {log_file}
                 if choice.lower() == 'q':
                     print("\nExiting program...")
                     sys.exit(0)
-                
                 choice = int(choice)
                 if 1 <= choice <= len(files):
                     selected_file = files[choice - 1]
@@ -133,19 +132,13 @@ Log File: {log_file}
         try:
             with open(file_path, 'r', encoding='utf-8') as file:
                 lines = file.readlines()[:2]
-                
                 header_row = [x.strip() for x in lines[0].split(',')]
                 value_row = next(csv.reader([lines[1]]))
-                
                 header_dict = dict(zip(header_row, value_row))
-                
                 text_box_180 = header_dict.get('Textbox180', '').strip()
                 text_box_171 = header_dict.get('Textbox171', '').strip()
-                
                 logging.info(f"Header values found - TextBox180: '{text_box_180}', TextBox171: '{text_box_171}'")
-                
                 return text_box_180, text_box_171
-                
         except Exception as e:
             logging.error(f"Error reading header: {e}")
             return '', ''
@@ -160,235 +153,18 @@ Log File: {log_file}
             return text_box_180
         return ''
 
-    def prompt_for_user_inputs(self) -> Dict:
-        """Prompt the user for processing parameters."""
-        print("\n" + "-"*80)
-        print("Additional Information Needed".center(80))
-        print("-"*80)
-        
-        # Get Sales Person
-        sales_people = self.config.sales_people
-        print("\n1. Sales Person:")
-        for idx, person in enumerate(sales_people, 1):
-            print(f"   [{idx}] {person}")
-            
-        while True:
-            try:
-                choice = int(input("\nSelect sales person (enter number): "))
-                if 1 <= choice <= len(sales_people):
-                    sales_person = sales_people[choice-1]
-                    break
-                print(f"❌ Please enter a number between 1 and {len(sales_people)}")
-            except ValueError:
-                print("❌ Please enter a valid number")
-        
-        # Billing Type
-        print("\n2. Billing Type:")
-        print("   [C] Calendar")
-        print("   [B] Broadcast")
-        while True:
-            billing_input = input("\nSelect billing type (C/B): ").strip().upper()
-            if billing_input in ['C', 'B']:
-                billing_type = "Calendar" if billing_input == 'C' else "Broadcast"
-                break
-            print("❌ Please enter 'C' for Calendar or 'B' for Broadcast")
-        
-        # Revenue Type
-        print("\n3. Revenue Type:")
-        print("   [B] Branded Content")
-        print("   [D] Direct Response Sales")
-        print("   [I] Internal Ad Sales")
-        print("   [P] Paid Programming")
-        while True:
-            revenue_input = input("\nSelect revenue type (B/D/I/P): ").strip().upper()
-            if revenue_input in ['B', 'D', 'I', 'P']:
-                revenue_types = {
-                    'B': "Branded Content",
-                    'D': "Direct Response Sales",
-                    'I': "Internal Ad Sales",
-                    'P': "Paid Programming"
-                }
-                revenue_type = revenue_types[revenue_input]
-                break
-            print("❌ Please enter 'B', 'D', 'I', or 'P'")
-        
-        # Agency Type and Fee
-        print("\n4. Order Type:")
-        print("   [A] Agency")
-        print("   [N] Non-Agency")
-        print("   [T] Trade")
-        
-        agency_fee = None
-        while True:
-            agency_input = input("\nSelect order type (A/N/T): ").strip().upper()
-            if agency_input in ['A', 'N', 'T']:
-                agency_types = {
-                    'A': "Agency",
-                    'N': "Non-Agency",
-                    'T': "Trade"
-                }
-                agency_flag = agency_types[agency_input]
-                
-                if agency_input == 'A':
-                    print("\n5. Agency Fee Type:")
-                    print("   [S] Standard (15%)")
-                    print("   [C] Custom")
-                    while True:
-                        fee_type = input("\nSelect fee type (S/C): ").strip().upper()
-                        if fee_type == 'S':
-                            agency_fee = 0.15
-                            break
-                        elif fee_type == 'C':
-                            while True:
-                                try:
-                                    custom_fee = float(input("\nEnter custom fee percentage (without % symbol): "))
-                                    if 0 <= custom_fee <= 100:
-                                        agency_fee = custom_fee / 100
-                                        break
-                                    print("❌ Please enter a percentage between 0 and 100")
-                                except ValueError:
-                                    print("❌ Please enter a valid number")
-                            break
-                        print("❌ Please enter 'S' for Standard or 'C' for Custom")
-                break
-            print("❌ Please enter 'A' for Agency, 'N' for Non-Agency, or 'T' for Trade")
-        
-        print("\n✅ Information collected successfully!")
-        return {
-            "billing_type": billing_type,
-            "revenue_type": revenue_type,
-            "agency_flag": agency_flag,
-            "sales_person": sales_person,
-            "agency_fee": agency_fee
-        }
-    
-    def prompt_for_language(self) -> str:
-        """Prompt the user to select a language from the configured options."""
-        print("\n" + "-"*80)
-        print("Language Selection".center(80))
-        print("-"*80)
-        
-        print("\nAvailable language options:")
-        for idx, lang in enumerate(self.config.language_options, 1):
-            print(f"   [{idx}] {lang}")
-        
-        while True:
-            try:
-                choice = input("\nSelect language (enter number): ").strip()
-                if choice.lower() == 'q':
-                    print("\nExiting program...")
-                    sys.exit(0)
-                
-                choice = int(choice)
-                if 1 <= choice <= len(self.config.language_options):
-                    selected_lang = self.config.language_options[choice - 1]
-                    print(f"\n✅ Selected: {selected_lang}")
-                    return selected_lang
-                else:
-                    print(f"❌ Please enter a number between 1 and {len(self.config.language_options)}")
-            except ValueError:
-                print("❌ Please enter a valid number or 'q' to quit")
-
-    def prompt_for_type(self) -> str:
-        """Prompt the user to select a type from the configured options."""
-        print("\n" + "-"*80)
-        print("Type Selection".center(80))
-        print("-"*80)
-        
-        print("\nAvailable type options:")
-        for idx, type_opt in enumerate(self.config.type_options, 1):
-            print(f"   [{idx}] {type_opt}")
-        
-        while True:
-            try:
-                choice = input("\nSelect type (enter number): ").strip()
-                if choice.lower() == 'q':
-                    print("\nExiting program...")
-                    sys.exit(0)
-                
-                choice = int(choice)
-                if 1 <= choice <= len(self.config.type_options):
-                    selected_type = self.config.type_options[choice - 1]
-                    print(f"\n✅ Selected: {selected_type}")
-                    return selected_type
-                else:
-                    print(f"❌ Please enter a number between 1 and {len(self.config.type_options)}")
-            except ValueError:
-                print("❌ Please enter a valid number or 'q' to quit")
-
-    def prompt_for_affidavit(self) -> str:
-        """Prompt the user to select 'Y' or 'N' for the Affidavit column."""
-        print("\n" + "-"*80)
-        print("Affidavit Selection".center(80))
-        print("-"*80)
-        
-        while True:
-            affidavit_input = input("\nIs this an affidavit? (Y/N): ").strip().upper()
-            if affidavit_input in ['Y', 'N']:
-                print(f"\n✅ Selected: {affidavit_input}")
-                return affidavit_input
-            else:
-                print("❌ Please enter 'Y' for Yes or 'N' for No")
-
-    def verify_languages(self, df: pd.DataFrame, language_info: Tuple[Dict[str, int], pd.Series]) -> pd.Series:
-        """
-        Show detected languages and verify accuracy.
-        """
-        detected_counts, row_languages = language_info
-        
-        print("\n" + "-"*80)
-        print("Language Detection Results".center(80))
-        print("-"*80)
-        
-        # Show what was found
-        for lang_code, count in detected_counts.items():
-            lang_name = next((k for k, v in self.file_processor.language_mapping.items() 
-                            if v == lang_code and k != 'default'), "English")
-            print(f"   • {lang_name} ({lang_code}): {count} entries")
-        
-        # Quick verification of first few rows of each language
-        print("\nSample entries:")
-        for lang_code in detected_counts:
-            rows = df[row_languages == lang_code]
-            if not rows.empty:
-                print(f"\n{lang_code}:")
-                samples = rows['rowdescription'].head(2)
-                for desc in samples:
-                    print(f"   • {desc}")
-        
-        # Only ask for verification if something seems off
-        if len(detected_counts) > 1:  # Multiple languages detected
-            print("\nDoes this look correct? (Y/N)")
-            if input().strip().lower() == 'n':
-                # Show available options
-                print("\nAvailable language codes:")
-                for idx, code in enumerate(self.config.language_options, 1):
-                    print(f"   [{idx}] {code}")
-                
-                # Allow fixes
-                while True:
-                    print("\nEnter row number to change language, or press Enter to continue")
-                    row_input = input().strip()
-                    if not row_input:
-                        break
-                    
-                    try:
-                        row_idx = int(row_input)
-                        if 0 <= row_idx < len(df):
-                            print(f"Current: {df.iloc[row_idx]['rowdescription']}")
-                            print(f"Language: {row_languages.iloc[row_idx]}")
-                            new_lang = input("Enter new language code: ").strip().upper()
-                            if new_lang in self.config.language_options:
-                                row_languages.iloc[row_idx] = new_lang
-                    except ValueError:
-                        print("Invalid input, try again")
-        
-        return row_languages
-
     def apply_user_inputs(self, df: pd.DataFrame, billing_type: str, revenue_type: str, 
                             agency_flag: str, sales_person: str, agency_fee: Optional[float],
-                            language: Dict, type_: str, affidavit: str, is_worldlink: bool = False) -> pd.DataFrame:
-        """Apply user input to the appropriate columns in the DataFrame."""
+                            language: Dict, type_: str, affidavit: str, estimate: str, 
+                            is_worldlink: bool = False) -> pd.DataFrame:
+        """
+        Apply user input values to the DataFrame.
+        
+        Adds columns for billing type, revenue type, agency flag, sales person,
+        language, type, affidavit, and estimate, then handles WorldLink-specific
+        processing and broker fees. Ensures all required columns exist and orders them
+        according to configuration.
+        """
         try:
             logging.info("Applying user inputs to DataFrame...")
             
@@ -400,22 +176,22 @@ Log File: {log_file}
             df['Lang.'] = df.index.map(language)
             df['Type'] = type_
             df['Affidavit?'] = affidavit
-
-            # Handle WorldLink specific processing
+            
+            # Add the Estimate column from user input
+            df['Estimate'] = estimate
+            
+            # Handle WorldLink-specific processing
             if is_worldlink:
                 logging.info("Processing WorldLink order specific requirements...")
-                # Ensure Market column exists before copying
                 if 'Market' in df.columns:
                     logging.info("Copying Market data to Makegood column")
-                    # Create Makegood column if it doesn't exist
                     if 'Make Good' not in df.columns:
                         df['Make Good'] = None
-                    # Copy Market data to Makegood
                     df['Make Good'] = df['Market']
                     logging.info("Successfully copied Market data to Make Good")
                 else:
                     logging.warning("Market column not found in WorldLink order - cannot copy to Make Good")
-
+            
             # Handle agency fees
             if agency_flag == "Agency" and agency_fee is not None:
                 try:
@@ -429,7 +205,7 @@ Log File: {log_file}
             else:
                 df['Broker Fees'] = None
                 logging.info("No broker fees applied (non-agency or no fee specified)")
-
+            
             # Ensure all required columns exist
             logging.info("Ensuring all required columns exist...")
             for col in self.config.final_columns:
@@ -437,7 +213,7 @@ Log File: {log_file}
                     logging.info(f"Adding missing column: {col}")
                     df[col] = None
             
-            # Reorder columns according to config
+            # Reorder columns according to configuration
             logging.info("Reordering columns according to configuration...")
             try:
                 df = df[self.config.final_columns]
@@ -448,7 +224,7 @@ Log File: {log_file}
             
             logging.info("Successfully applied user inputs!")
             return df
-                
+                    
         except Exception as e:
             logging.error(f"Error applying user inputs: {str(e)}")
             raise
@@ -456,49 +232,40 @@ Log File: {log_file}
 
     def save_to_excel(self, df: pd.DataFrame, output_path: str, agency_fee: Optional[float] = 0.15):
         try:
-            # Get template path using correct attribute name
             template_path = self.config.paths.template_path
             logging.info(f"Loading template from: {template_path}")
             workbook = load_workbook(template_path, data_only=False)
             sheet = workbook.active
             
-            # Get column indices from config
             columns = self.config.final_columns
-            
-            # Extract formulas and formatting from the second row of the template
             template_formulas = {}
             template_formatting = {}
             for col in range(1, len(columns) + 1):
                 cell = sheet.cell(row=2, column=col)
-                if cell.value and str(cell.value).startswith('='):  # Check if it's a formula
+                if cell.value and str(cell.value).startswith('='):
                     template_formulas[col] = cell.value
-                # Store formatting (style, number format, etc.)
                 template_formatting[col] = {
                     'style': cell.style,
                     'number_format': cell.number_format,
-                    'border': cell.border.copy(),  # Create a copy of the border
-                    'fill': cell.fill.copy(),      # Create a copy of the fill
-                    'font': cell.font.copy(),      # Create a copy of the font
-                    'alignment': cell.alignment.copy()  # Create a copy of the alignment
+                    'border': copy(cell.border),
+                    'fill': copy(cell.fill),
+                    'font': copy(cell.font),
+                    'alignment': copy(cell.alignment)
                 }
             
-            # Write headers
             for col_num, column_title in enumerate(columns, 1):
                 sheet.cell(row=1, column=col_num, value=column_title)
             
-            # Write data and apply formulas/formatting
             for row_num, row_data in enumerate(df.values, 2):
                 for col_num, cell_value in enumerate(row_data, 1):
                     cell = sheet.cell(row=row_num, column=col_num)
                     if col_num in template_formulas:
-                        # Apply the formula to the new row
                         formula = template_formulas[col_num]
-                        formula = formula.replace('2', str(row_num))  # Adjust row reference
+                        formula = formula.replace('2', str(row_num))
                         cell.value = formula
                     else:
                         cell.value = cell_value
                     
-                    # Apply formatting from the template's second row
                     if col_num in template_formatting:
                         cell.style = template_formatting[col_num]['style']
                         cell.number_format = template_formatting[col_num]['number_format']
@@ -507,15 +274,13 @@ Log File: {log_file}
                         cell.font = template_formatting[col_num]['font']
                         cell.alignment = template_formatting[col_num]['alignment']
             
-            # Fix the Month column (column S)
-            month_col = columns.index('Month') + 1  # Get the column index for 'Month'
-            for row_num in range(2, len(df) + 2):  # Iterate over all rows
+            month_col = columns.index('Month') + 1
+            for row_num in range(2, len(df) + 2):
                 air_date_cell = sheet.cell(row=row_num, column=columns.index('Air Date') + 1)
-                if air_date_cell.value:  # Check if Air Date is valid
+                if air_date_cell.value:
                     try:
-                        # Calculate the month based on Air Date
                         air_date = pd.to_datetime(air_date_cell.value)
-                        month_value = air_date.strftime('%b-%y')  # Format as 'Dec-24'
+                        month_value = air_date.strftime('%b-%y')
                         sheet.cell(row=row_num, column=month_col, value=month_value)
                     except Exception as e:
                         logging.warning(f"Error calculating month for row {row_num}: {e}")
@@ -523,18 +288,14 @@ Log File: {log_file}
                 else:
                     sheet.cell(row=row_num, column=month_col, value="No Date")
             
-            # Set the Priority column (column U) to 4 for all rows
-            priority_col = columns.index('Priority') + 1  # Get the column index for 'Priority'
-            for row_num in range(2, len(df) + 2):  # Iterate over all rows
+            priority_col = columns.index('Priority') + 1
+            for row_num in range(2, len(df) + 2):
                 sheet.cell(row=row_num, column=priority_col, value=4)
             
-            # Remove excess rows if the template has more rows than the CSV
             if sheet.max_row > len(df) + 1:
                 sheet.delete_rows(len(df) + 2, sheet.max_row - (len(df) + 1))
             
-            # Ensure output directory exists
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            
             workbook.save(output_path)
             logging.info("Excel file saved successfully with formulas, formatting, and Priority Number preserved")
             
@@ -543,18 +304,12 @@ Log File: {log_file}
             raise
 
     def generate_processing_summary(self, df: pd.DataFrame, input_file: str, output_file: str, user_inputs: Dict) -> Dict:
-        """Generate comprehensive summary of the processing results."""
         try:
-            # Convert date column to datetime
             df['Air Date'] = pd.to_datetime(df['Air Date'])
-            
-            # Convert Gross Rate to numeric for calculations
             gross_values = pd.to_numeric(
                 df['Gross Rate'].str.replace('$', '').str.replace(',', ''),
                 errors='coerce'
             ).fillna(0)
-            
-            # Calculate spots by day of week
             df['Day_of_Week'] = df['Air Date'].dt.day_name()
             spots_by_day = df['Day_of_Week'].value_counts().to_dict()
             
@@ -592,47 +347,37 @@ Log File: {log_file}
             raise
 
     def process_file(self, file_path: str, user_inputs: Optional[Dict] = None) -> ProcessingResult:
-        """Process a single input file with enhanced error handling."""
         filename = os.path.basename(file_path)
         logging.info(f"###### Starting processing of {filename} ######")
         
         try:
-            # Extract header values
             logging.info("Extracting header values...")
             text_box_180, text_box_171 = self.extract_header_values(file_path)
-            
-            # Load and clean data using FileProcessor
             logging.info("Loading and cleaning data...")
             df = self.file_processor.load_and_clean_data(file_path)
-            
-            # Detect and verify languages using FileProcessor
             logging.info("Detecting languages in data...")
             detected_counts, row_languages = self.file_processor.detect_languages(df)
             logging.info(f"Detected language counts: {detected_counts}")
-            
-            # Apply transformations using FileProcessor
             logging.info("Applying transformations...")
             df = self.file_processor.apply_transformations(df, text_box_180, text_box_171)
             
-            # Get user inputs if not provided
             if user_inputs is None:
                 logging.info("Collecting user inputs...")
-                user_inputs = self.prompt_for_user_inputs()
-                # Add type selection
-                type_ = self.prompt_for_type()
-                user_inputs['type'] = type_
-                # Add affidavit selection
-                affidavit = self.prompt_for_affidavit()
-                user_inputs['affidavit'] = affidavit
-                user_inputs['is_worldlink'] = False  # Default to False for manual input
+                user_inputs = collect_user_inputs(self.config)
+                user_inputs['is_worldlink'] = False
             
-            # Convert row_languages (Series) to a dictionary
             language_dict = row_languages.to_dict() if not row_languages.empty else {}
-            
-            # Add the language dictionary to user_inputs
             user_inputs['language'] = language_dict
             
-            # Apply user inputs with row-specific languages
+            logging.info("Verifying languages...")
+            primary_language = verify_languages(df, (detected_counts, row_languages))
+            if isinstance(primary_language, pd.Series):
+                primary_language = primary_language.to_dict()
+            user_inputs['language'] = primary_language
+
+            
+            user_inputs['language'] = primary_language
+            
             logging.info("Applying user inputs...")
             df = self.apply_user_inputs(
                 df,
@@ -647,28 +392,19 @@ Log File: {log_file}
                 is_worldlink=user_inputs.get('is_worldlink', False)
             )
             
-            # Save output file
             logging.info("Saving output file...")
-            # Generate output filename
             output_filename = f"processed_{os.path.splitext(filename)[0]}.xlsx"
             output_path = os.path.join(self.config.paths.output_dir, output_filename)
-
-            
-            # Save using save_to_excel instead of save_output_file
             self.save_to_excel(df, output_path, user_inputs.get('agency_fee'))
             
-            # Generate and save summary
             logging.info("Generating processing summary...")
             summary = self.generate_processing_summary(df, file_path, output_path, user_inputs)
-            
-            # Add language detection info to summary
             language_distribution = row_languages.value_counts().to_dict() if not row_languages.empty else {}
             summary["language_info"] = {
                 "detected_languages": detected_counts,
                 "language_distribution": language_distribution
             }
             
-            # Add WorldLink status to summary if applicable
             if user_inputs.get('is_worldlink', False):
                 summary["processing_info"]["worldlink_order"] = True
                 if 'Market' in df.columns:
@@ -686,42 +422,24 @@ Log File: {log_file}
         except FileNotFoundError as e:
             error_msg = f"File not found: {filename}"
             logging.error(error_msg)
-            return ProcessingResult(
-                filename=filename,
-                success=False,
-                error_message=error_msg
-            )
+            return ProcessingResult(filename=filename, success=False, error_message=error_msg)
         except pd.errors.EmptyDataError as e:
             error_msg = f"File is empty: {filename}"
             logging.error(error_msg)
-            return ProcessingResult(
-                filename=filename,
-                success=False,
-                error_message=error_msg
-            )
+            return ProcessingResult(filename=filename, success=False, error_message=error_msg)
         except ProcessingError as e:
             error_msg = f"Processing error in {filename}: {str(e)}"
             logging.error(error_msg)
-            return ProcessingResult(
-                filename=filename,
-                success=False,
-                error_message=error_msg
-            )
+            return ProcessingResult(filename=filename, success=False, error_message=error_msg)
         except Exception as e:
             error_msg = f"Unexpected error processing {filename}: {str(e)}"
             logging.error(error_msg, exc_info=True)
-            return ProcessingResult(
-                filename=filename,
-                success=False,
-                error_message=error_msg
-            )
+            return ProcessingResult(filename=filename, success=False, error_message=error_msg)
 
     def process_batch(self, files: List[str], show_progress: bool = True) -> Dict[str, List[ProcessingResult]]:
-        """Process multiple files with progress tracking and error recovery."""
         successful = []
         failed = []
         
-        # First, check if this is a WorldLink batch
         print("\n" + "-"*80)
         print("Batch Processing Setup".center(80))
         print("-"*80)
@@ -734,45 +452,30 @@ Log File: {log_file}
             base_user_inputs = self.get_worldlink_defaults()
             logging.info("Using WorldLink default settings for batch processing")
         else:
-            # Existing logic for non-WorldLink batches
             shared_inputs = input("\nDo all files in this batch share the same user inputs? (Y/N): ").strip().lower()
             if shared_inputs == 'y':
                 print("\nCollecting shared user inputs for the batch...")
-                base_user_inputs = self.prompt_for_user_inputs()
-                # Add type selection
-                type_ = self.prompt_for_type()
-                base_user_inputs['type'] = type_
-                # Add affidavit selection
-                affidavit = self.prompt_for_affidavit()
-                base_user_inputs['affidavit'] = affidavit
+                base_user_inputs = collect_user_inputs(self.config)
         
         files_iter = tqdm(files, desc="Processing files") if show_progress else files
         
         for file_path in files_iter:
             try:
-                # Load the data first to detect language using FileProcessor
                 df = self.file_processor.load_and_clean_data(file_path)
-                
-                # Detect languages in this file using FileProcessor
                 detected_languages = self.file_processor.detect_languages(df)
                 
                 if base_user_inputs:
-                    # Create a copy of base inputs for this file
                     file_inputs = base_user_inputs.copy()
                 else:
-                    # Get new inputs for this file
-                    file_inputs = self.prompt_for_user_inputs()
-                    type_ = self.prompt_for_type()
-                    file_inputs['type'] = type_
-                    affidavit = self.prompt_for_affidavit()
-                    file_inputs['affidavit'] = affidavit
+                    file_inputs = collect_user_inputs(self.config)
                 
-                # Always detect and verify language for each file
                 print(f"\nProcessing file: {os.path.basename(file_path)}")
-                primary_language = self.verify_languages(df, detected_languages)
+                primary_language = verify_languages(df, detected_languages)
+                if isinstance(primary_language, pd.Series):
+                    primary_language = primary_language.to_dict()
                 file_inputs['language'] = primary_language
+
                 
-                # Process the file with complete inputs
                 result = self.process_file(file_path, file_inputs)
                 
                 if result.success:
@@ -780,7 +483,6 @@ Log File: {log_file}
                 else:
                     failed.append(result)
                 
-                # Save interim results
                 self._save_interim_results(successful, failed)
                 
             except Exception as e:
@@ -795,40 +497,27 @@ Log File: {log_file}
         return {"successful": successful, "failed": failed}
 
     def _save_interim_results(self, successful: List[ProcessingResult], failed: List[ProcessingResult]):
-        """Save interim results to protect against crashes."""
         interim_file = Path(self.config.paths.output_dir) / 'interim_results.json'
-        
-        # Convert ProcessingResult objects to dictionaries
         results = {
             "timestamp": datetime.now().isoformat(),
             "successful": [],
             "failed": []
         }
-        
-        # Convert successful results
         for result in successful:
             result_dict = vars(result)
-            # Convert Series to dict if present in metrics
             if "metrics" in result_dict and "language_distribution" in result_dict["metrics"]:
                 result_dict["metrics"]["language_distribution"] = result_dict["metrics"]["language_distribution"].to_dict()
             results["successful"].append(result_dict)
-        
-        # Convert failed results
         for result in failed:
             results["failed"].append(vars(result))
-        
-        # Save to JSON
         with open(interim_file, 'w') as f:
             json.dump(results, f, indent=2)
 
-    def _display_batch_summary(self, successful: List[ProcessingResult], 
-                             failed: List[ProcessingResult]):
-        """Display a user-friendly summary of batch processing results."""
+    def _display_batch_summary(self, successful: List[ProcessingResult], failed: List[ProcessingResult]):
         print("\n" + "="*80)
         print("Batch Processing Summary".center(80))
         print("="*80)
         
-        # Success/failure counts
         total = len(successful) + len(failed)
         success_rate = (len(successful) / total * 100) if total > 0 else 0
         
@@ -836,14 +525,12 @@ Log File: {log_file}
         print(f"Successfully processed: {len(successful)} ({success_rate:.1f}%)")
         print(f"Failed to process: {len(failed)}")
         
-        # Display failures
         if failed:
             print("\nFailed Files:")
             for result in failed:
                 print(f"❌ {result.filename}")
                 print(f"   Error: {result.error_message}")
         
-        # Display warnings
         if any(r.warnings for r in successful):
             print("\nWarnings:")
             for result in successful:
@@ -851,8 +538,6 @@ Log File: {log_file}
                     print(f"⚠️ {result.filename}:")
                     for warning in result.warnings:
                         print(f"   - {warning}")
-
-        # Display output locations
         if successful:
             print("\nProcessed Files:")
             for result in successful:
@@ -861,7 +546,6 @@ Log File: {log_file}
         print(f"\nDetailed logs available at: {self.log_file}")
 
     def main(self):
-        """Main function to control the flow of the program."""
         self.print_header()
         
         try:
@@ -876,13 +560,11 @@ Log File: {log_file}
                 print("\n🔄 Processing all files automatically...")
                 file_paths = [os.path.join(self.config.paths.input_dir, f) for f in files]
                 results = self.process_batch(file_paths)
-                
             elif choice == 'S':
                 while True:
                     file_path = self.select_input_file(files)
                     if file_path:
                         results = self.process_batch([file_path], show_progress=False)
-                    
                     print("\n" + "-"*80)
                     cont = input("\nWould you like to process another file? (Y/N): ").strip().lower()
                     if cont != 'y':
