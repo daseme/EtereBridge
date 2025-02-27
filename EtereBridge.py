@@ -261,12 +261,16 @@ Log File: {log_file}
             sheet = workbook.active
             
             columns = self.config.final_columns
+            
+            # --- 1) Extract formulas/formatting from the template's second row ---
             template_formulas = {}
             template_formatting = {}
             for col in range(1, len(columns) + 1):
                 cell = sheet.cell(row=2, column=col)
+                # If there's a formula in row 2, store it for later
                 if cell.value and str(cell.value).startswith('='):
                     template_formulas[col] = cell.value
+                # Save styling info
                 template_formatting[col] = {
                     'style': cell.style,
                     'number_format': cell.number_format,
@@ -276,56 +280,96 @@ Log File: {log_file}
                     'alignment': copy(cell.alignment)
                 }
             
-            for col_num, column_title in enumerate(columns, 1):
+            # --- 2) Write headers in row 1 ---
+            for col_num, column_title in enumerate(columns, start=1):
                 sheet.cell(row=1, column=col_num, value=column_title)
             
-            for row_num, row_data in enumerate(df.values, 2):
-                for col_num, cell_value in enumerate(row_data, 1):
+            # --- 3) Write data (row 2 onward) and apply template formatting ---
+            for row_num, row_data in enumerate(df.values, start=2):
+                for col_num, cell_value in enumerate(row_data, start=1):
                     cell = sheet.cell(row=row_num, column=col_num)
+                    
+                    # If there's a formula in the template for this column, use it
                     if col_num in template_formulas:
                         formula = template_formulas[col_num]
+                        # Replace row reference '2' with the actual row number
                         formula = formula.replace('2', str(row_num))
                         cell.value = formula
                     else:
                         cell.value = cell_value
                     
+                    # Apply stored formatting (style, number_format, etc.)
                     if col_num in template_formatting:
-                        cell.style = template_formatting[col_num]['style']
-                        cell.number_format = template_formatting[col_num]['number_format']
-                        cell.border = template_formatting[col_num]['border']
-                        cell.fill = template_formatting[col_num]['fill']
-                        cell.font = template_formatting[col_num]['font']
-                        cell.alignment = template_formatting[col_num]['alignment']
+                        fmt = template_formatting[col_num]
+                        cell.style = fmt['style']
+                        cell.number_format = fmt['number_format']
+                        cell.border = fmt['border']
+                        cell.fill = fmt['fill']
+                        cell.font = fmt['font']
+                        cell.alignment = fmt['alignment']
             
-            month_col = columns.index('Month') + 1  # Get the column index for 'Month'
-            for row_num in range(2, len(df) + 2):  # Iterate over all rows
-                air_date_value = sheet.cell(row=row_num, column=columns.index('Air Date') + 1).value
-                if air_date_value:
-                    try:
-                        # Parse the Air Date as a datetime object
-                        air_date = pd.to_datetime(air_date_value)
-                        # Write the actual date object to the Month cell
-                        month_cell = sheet.cell(row=row_num, column=month_col, value=air_date)
-                        # Set the cell's number format to "m/d/yyyy"
-                        month_cell.number_format = "m/d/yyyy"
-                    except Exception as e:
-                        logging.warning(f"Error calculating month for row {row_num}: {e}")
-                        sheet.cell(row=row_num, column=month_col, value="Invalid Date")
-                else:
-                    sheet.cell(row=row_num, column=month_col, value="No Date")
-
+            # --- 4) Format the Month column if needed (unchanged if it's working fine) ---
+            if "Month" in columns:
+                month_col = columns.index("Month") + 1
+                air_date_idx = columns.index("Air Date") + 1 if "Air Date" in columns else None
+                for row_num in range(2, len(df) + 2):
+                    if air_date_idx:
+                        air_date_val = sheet.cell(row=row_num, column=air_date_idx).value
+                        if air_date_val:
+                            try:
+                                dt = pd.to_datetime(air_date_val)
+                                month_cell = sheet.cell(row=row_num, column=month_col, value=dt)
+                                # Example: keep "m/d/yyyy" if that was already working
+                                month_cell.number_format = "m/d/yyyy"
+                            except Exception as e:
+                                logging.warning(f"Error formatting Month row {row_num}: {e}")
+                                sheet.cell(row=row_num, column=month_col, value="Invalid Date")
+                        else:
+                            sheet.cell(row=row_num, column=month_col, value="No Date")
             
-            priority_col = columns.index('Priority') + 1
-            for row_num in range(2, len(df) + 2):
-                sheet.cell(row=row_num, column=priority_col, value=4)
+            # --- 5) Format Air Date with 2-digit year (m/d/yy) ---
+            if "Air Date" in columns:
+                air_date_col = columns.index("Air Date") + 1
+                for row_num in range(2, len(df) + 2):
+                    cell = sheet.cell(row=row_num, column=air_date_col)
+                    if cell.value:
+                        try:
+                            dt = pd.to_datetime(cell.value)
+                            cell.value = dt
+                            cell.number_format = "m/d/yy"  # 2-digit year
+                        except Exception as e:
+                            logging.warning(f"Error formatting Air Date row {row_num}: {e}")
             
+            # --- 6) Format End Date with 2-digit year (m/d/yy) ---
+            if "End Date" in columns:
+                end_date_col = columns.index("End Date") + 1
+                for row_num in range(2, len(df) + 2):
+                    cell = sheet.cell(row=row_num, column=end_date_col)
+                    if cell.value:
+                        try:
+                            dt = pd.to_datetime(cell.value)
+                            cell.value = dt
+                            cell.number_format = "m/d/yy"  # 2-digit year
+                        except Exception as e:
+                            logging.warning(f"Error formatting End Date row {row_num}: {e}")
+            
+            # --- 7) (Optional) Set the Priority column to 4 if it exists ---
+            if "Priority" in columns:
+                priority_col = columns.index("Priority") + 1
+                for row_num in range(2, len(df) + 2):
+                    sheet.cell(row=row_num, column=priority_col, value=4)
+            
+            # --- 8) Remove extra rows if the template has more rows than the CSV data ---
             if sheet.max_row > len(df) + 1:
                 sheet.delete_rows(len(df) + 2, sheet.max_row - (len(df) + 1))
             
+            # Ensure the output directory exists
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
+            # Save the final workbook
             workbook.save(output_path)
             logging.info("Excel file saved successfully with formulas, formatting, and Priority Number preserved")
-            
+        
         except Exception as e:
             logging.error(f"Error saving to Excel: {str(e)}")
             raise
