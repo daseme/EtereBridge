@@ -155,7 +155,7 @@ Log File: {log_file}
 
     def apply_user_inputs(self, df: pd.DataFrame, billing_type: str, revenue_type: str, 
                             agency_flag: str, sales_person: str, agency_fee: Optional[float],
-                            language: Dict, affidavit: str, estimate: str, 
+                            language: Dict, affidavit: str, estimate: str, contract: str, 
                             is_worldlink: bool = False) -> pd.DataFrame:
         """
         Apply user input values to the DataFrame.
@@ -178,8 +178,9 @@ Log File: {log_file}
             df['Lang.'] = df.index.map(language)
             df['Affidavit?'] = affidavit
             
-            # Add the Estimate column from user input
+            # Add Estimate and Contract columns from user input
             df['Estimate'] = estimate
+            df['Contract'] = contract   # <-- New: write contract number
             
             # Compute Type automatically from Gross Rate on a per-row basis.
             def compute_type(row):
@@ -411,6 +412,7 @@ Log File: {log_file}
                 language=language_dict,
                 affidavit=user_inputs['affidavit'],
                 estimate=user_inputs['estimate'],
+                contract=user_inputs['contract'],
                 is_worldlink=user_inputs.get('is_worldlink', False)
             )
             

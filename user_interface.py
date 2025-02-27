@@ -102,6 +102,17 @@ def prompt_for_affidavit():
             return affidavit
         print("Enter 'Y' or 'N'.")
 
+def prompt_for_contract():
+    """
+    Prompt the user to enter a contract number.
+    """
+    while True:
+        contract = input("\nPlease enter the contract number: ").strip()
+        if contract:
+            return contract
+        print("Contract number cannot be empty. Please enter a valid contract number.")
+
+
 def collect_user_inputs(config):
     """Collect and return all user inputs as a dictionary."""
     inputs = {}
@@ -111,7 +122,8 @@ def collect_user_inputs(config):
     order_type, agency_fee = prompt_for_order_type()
     inputs["agency_flag"] = order_type
     inputs["agency_fee"] = agency_fee
-    inputs["estimate"] = prompt_for_estimate()  # New prompt for estimate number
+    inputs["estimate"] = prompt_for_estimate()
+    inputs["contract"] = prompt_for_contract()  # New prompt for estimate number
     # Type selection is now automatic—no prompt needed.
     inputs["affidavit"] = prompt_for_affidavit()
     return inputs
