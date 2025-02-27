@@ -297,19 +297,23 @@ Log File: {log_file}
                         cell.font = template_formatting[col_num]['font']
                         cell.alignment = template_formatting[col_num]['alignment']
             
-            month_col = columns.index('Month') + 1
-            for row_num in range(2, len(df) + 2):
-                air_date_cell = sheet.cell(row=row_num, column=columns.index('Air Date') + 1)
-                if air_date_cell.value:
+            month_col = columns.index('Month') + 1  # Get the column index for 'Month'
+            for row_num in range(2, len(df) + 2):  # Iterate over all rows
+                air_date_value = sheet.cell(row=row_num, column=columns.index('Air Date') + 1).value
+                if air_date_value:
                     try:
-                        air_date = pd.to_datetime(air_date_cell.value)
-                        month_value = air_date.strftime('%b-%y')
-                        sheet.cell(row=row_num, column=month_col, value=month_value)
+                        # Parse the Air Date as a datetime object
+                        air_date = pd.to_datetime(air_date_value)
+                        # Write the actual date object to the Month cell
+                        month_cell = sheet.cell(row=row_num, column=month_col, value=air_date)
+                        # Set the cell's number format to "m/d/yyyy"
+                        month_cell.number_format = "m/d/yyyy"
                     except Exception as e:
                         logging.warning(f"Error calculating month for row {row_num}: {e}")
                         sheet.cell(row=row_num, column=month_col, value="Invalid Date")
                 else:
                     sheet.cell(row=row_num, column=month_col, value="No Date")
+
             
             priority_col = columns.index('Priority') + 1
             for row_num in range(2, len(df) + 2):
