@@ -11,6 +11,7 @@ import json  # Add this import
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from tqdm import tqdm
+from utils import safe_convert_date
 from config_manager import config_manager
 from file_processor import FileProcessor
 from user_interface import collect_user_inputs, verify_languages  # Updated import
@@ -315,43 +316,43 @@ Log File: {log_file}
                 for row_num in range(2, len(df) + 2):
                     if air_date_idx:
                         air_date_val = sheet.cell(row=row_num, column=air_date_idx).value
-                        if air_date_val:
-                            try:
-                                dt = pd.to_datetime(air_date_val)
-                                month_cell = sheet.cell(row=row_num, column=month_col, value=dt)
-                                # Example: keep "m/d/yyyy" if that was already working
-                                month_cell.number_format = "m/d/yyyy"
-                            except Exception as e:
-                                logging.warning(f"Error formatting Month row {row_num}: {e}")
-                                sheet.cell(row=row_num, column=month_col, value="Invalid Date")
+                        dt = safe_convert_date(air_date_val)
+                        if dt is not None:
+                            month_cell = sheet.cell(row=row_num, column=month_col, value=dt)
+                            month_cell.number_format = "m/d/yyyy"
+                        elif air_date_val:
+                            logging.warning(f"Error formatting Month row {row_num}: value '{air_date_val}' not parseable")
+                            sheet.cell(row=row_num, column=month_col, value="Invalid Date")
                         else:
                             sheet.cell(row=row_num, column=month_col, value="No Date")
-            
+
             # --- 5) Format Air Date with 2-digit year (m/d/yy) ---
             if "Air Date" in columns:
                 air_date_col = columns.index("Air Date") + 1
                 for row_num in range(2, len(df) + 2):
                     cell = sheet.cell(row=row_num, column=air_date_col)
                     if cell.value:
-                        try:
-                            dt = pd.to_datetime(cell.value)
+                        dt = safe_convert_date(cell.value)
+                        if dt is not None:
                             cell.value = dt
                             cell.number_format = "m/d/yy"  # 2-digit year
-                        except Exception as e:
-                            logging.warning(f"Error formatting Air Date row {row_num}: {e}")
-            
+                        else:
+                            logging.warning(f"Error formatting Air Date row {row_num}: value '{cell.value}' not parseable")
+
             # --- 6) Format End Date with 2-digit year (m/d/yy) ---
             if "End Date" in columns:
                 end_date_col = columns.index("End Date") + 1
                 for row_num in range(2, len(df) + 2):
                     cell = sheet.cell(row=row_num, column=end_date_col)
                     if cell.value:
-                        try:
-                            dt = pd.to_datetime(cell.value)
+                        dt = safe_convert_date(cell.value)
+                        if dt is not None:
                             cell.value = dt
                             cell.number_format = "m/d/yy"  # 2-digit year
-                        except Exception as e:
-                            logging.warning(f"Error formatting End Date row {row_num}: {e}")
+                        else:
+                            logging.warning(f"Error formatting End Date row {row_num}: value '{cell.value}' not parseable")
+
+
             
             # --- 7) (Optional) Set the Priority column to 4 if it exists ---
             if "Priority" in columns:
@@ -376,7 +377,7 @@ Log File: {log_file}
 
     def generate_processing_summary(self, df: pd.DataFrame, input_file: str, output_file: str, user_inputs: Dict) -> Dict:
         try:
-            df['Air Date'] = pd.to_datetime(df['Air Date'])
+            df['Air Date'] = df['Air Date'].apply(safe_convert_date)
             gross_values = pd.to_numeric(
                 df['Gross Rate'].str.replace('$', '').str.replace(',', ''),
                 errors='coerce'
