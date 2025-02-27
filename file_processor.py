@@ -115,17 +115,23 @@ class FileProcessor:
             return value.replace(",", "").split(".")[0]
         return value
 
-    def round_to_nearest_30_seconds(self, seconds):
+    def round_to_nearest_increment(self, seconds):
         """
-        Round the given seconds to the nearest 30-second increment.
+        Round the given seconds to the nearest 15-second increment.
+        If the seconds are less than 15, return the original value.
         """
         try:
             if pd.isna(seconds) or not str(seconds).strip():
                 return 0
-            return round(float(seconds) / 15) * 15
+            value = float(seconds)
+            if value < 15:
+                return value
+            return round(value / 15) * 15
         except (ValueError, TypeError) as e:
             logging.warning(f"Error rounding seconds '{seconds}': {e}")
             return 0
+
+
 
     def safe_to_numeric(self, value):
         """
@@ -225,7 +231,7 @@ class FileProcessor:
             df = transform_gross_rate(df, self.safe_to_numeric)
 
             # Transform Length
-            df = transform_length(df, self.round_to_nearest_30_seconds)
+            df = transform_length(df, self.round_to_nearest_increment)
 
             # Transform Line and '#' columns
             df = transform_line_columns(df)
