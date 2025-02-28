@@ -7,13 +7,14 @@ import pandas as pd
 from datetime import datetime
 from pathlib import Path
 from openpyxl import load_workbook  # Add this import
+from openpyxl.utils import get_column_letter  # Add this import
 import json  # Add this import
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from tqdm import tqdm
 from utils import safe_convert_date
 from config_manager import config_manager
-from file_processor import FileProcessor
+from file_processor import FileProcessor, transform_month_column
 from user_interface import collect_user_inputs, verify_languages  # Updated import
 
 @dataclass
@@ -260,18 +261,16 @@ Log File: {log_file}
             logging.info(f"Loading template from: {template_path}")
             workbook = load_workbook(template_path, data_only=False)
             sheet = workbook.active
-            
+
             columns = self.config.final_columns
-            
-            # --- 1) Extract formulas/formatting from the template's second row ---
+
+            # 1) Extract formulas and formatting from template row 2.
             template_formulas = {}
             template_formatting = {}
             for col in range(1, len(columns) + 1):
                 cell = sheet.cell(row=2, column=col)
-                # If there's a formula in row 2, store it for later
                 if cell.value and str(cell.value).startswith('='):
                     template_formulas[col] = cell.value
-                # Save styling info
                 template_formatting[col] = {
                     'style': cell.style,
                     'number_format': cell.number_format,
@@ -280,69 +279,53 @@ Log File: {log_file}
                     'font': copy(cell.font),
                     'alignment': copy(cell.alignment)
                 }
-            
-            # --- 2) Write headers in row 1 ---
+
+            # 2) Write headers in row 1.
             for col_num, column_title in enumerate(columns, start=1):
                 sheet.cell(row=1, column=col_num, value=column_title)
-            
-            # --- 3) Write data (row 2 onward) and apply template formatting ---
-            # --- 3) Write data (row 2 onward) and apply template formatting ---
+
+            # 3) Write data starting at row 2.
             for row_num, row_data in enumerate(df.values, start=2):
                 for col_num, cell_value in enumerate(row_data, start=1):
                     cell = sheet.cell(row=row_num, column=col_num)
                     col_name = columns[col_num - 1]
-                    
-                    # If there's a formula in the template for this column, use it
-                    if col_num in template_formulas:
-                        formula = template_formulas[col_num]
-                        formula = formula.replace('2', str(row_num))
-                        cell.value = formula
-                    else:
-                        if col_name in ("Time In", "Time Out"):
-                            time_serial = self._parse_time_24h(cell_value)
-                            if time_serial is not None:
-                                cell.value = time_serial
-                                # Force custom time format, e.g. 37:30:55
-                                cell.number_format = "[h]:mm:ss"
-                            else:
-                                cell.value = cell_value
+
+                    if col_name in ("Time In", "Time Out"):
+                        time_serial = self._parse_time_24h(cell_value)
+                        if time_serial is not None:
+                            cell.value = time_serial
+                            cell.number_format = "[h]:mm:ss"
                         else:
-                            # Normal columns: just set the value
                             cell.value = cell_value
-                    
-                    # Apply template formatting for non-time columns only
+                    elif col_name == "End Date":
+                        if col_num in template_formulas:
+                            formula = template_formulas[col_num]
+                            cell.value = formula.replace('2', str(row_num))
+                        else:
+                            try:
+                                air_date_idx = columns.index("Air Date") + 1
+                                air_date_letter = get_column_letter(air_date_idx)
+                                cell.value = f"={air_date_letter}{row_num}"
+                            except Exception as e:
+                                logging.warning(f"Error setting End Date formula at row {row_num}: {e}")
+                                cell.value = cell_value
+                    elif col_num in template_formulas:
+                        formula = template_formulas[col_num]
+                        cell.value = formula.replace('2', str(row_num))
+                    else:
+                        cell.value = cell_value
+
                     if col_num in template_formatting:
                         fmt = template_formatting[col_num]
-                        # Always apply fill, border, font, alignment
                         cell.fill = fmt['fill']
                         cell.border = fmt['border']
                         cell.font = fmt['font']
                         cell.alignment = fmt['alignment']
-                        
-                        # But skip style/number_format for Time In/Time Out
                         if col_name not in ("Time In", "Time Out"):
                             cell.style = fmt['style']
                             cell.number_format = fmt['number_format']
 
-            
-            # --- 4) Format the Month column if needed (unchanged if it's working fine) ---
-            if "Month" in columns:
-                month_col = columns.index("Month") + 1
-                air_date_idx = columns.index("Air Date") + 1 if "Air Date" in columns else None
-                for row_num in range(2, len(df) + 2):
-                    if air_date_idx:
-                        air_date_val = sheet.cell(row=row_num, column=air_date_idx).value
-                        dt = safe_convert_date(air_date_val)
-                        if dt is not None:
-                            month_cell = sheet.cell(row=row_num, column=month_col, value=dt)
-                            month_cell.number_format = "m/d/yyyy"
-                        elif air_date_val:
-                            logging.warning(f"Error formatting Month row {row_num}: value '{air_date_val}' not parseable")
-                            sheet.cell(row=row_num, column=month_col, value="Invalid Date")
-                        else:
-                            sheet.cell(row=row_num, column=month_col, value="No Date")
-
-            # --- 5) Format Air Date with 2-digit year (m/d/yy) ---
+            # 4) Format Air Date with 2-digit year (m/d/yy).
             if "Air Date" in columns:
                 air_date_col = columns.index("Air Date") + 1
                 for row_num in range(2, len(df) + 2):
@@ -351,43 +334,53 @@ Log File: {log_file}
                         dt = safe_convert_date(cell.value)
                         if dt is not None:
                             cell.value = dt
-                            cell.number_format = "m/d/yy"  # 2-digit year
+                            cell.number_format = "m/d/yy"
                         else:
                             logging.warning(f"Error formatting Air Date row {row_num}: value '{cell.value}' not parseable")
 
-            # --- 6) Format End Date with 2-digit year (m/d/yy) ---
+            # 5) Format End Date with 2-digit year (m/d/yy).
             if "End Date" in columns:
                 end_date_col = columns.index("End Date") + 1
                 for row_num in range(2, len(df) + 2):
                     cell = sheet.cell(row=row_num, column=end_date_col)
-                    if cell.value:
+                    if cell.value and not isinstance(cell.value, str):
                         dt = safe_convert_date(cell.value)
                         if dt is not None:
                             cell.value = dt
-                            cell.number_format = "m/d/yy"  # 2-digit year
+                            cell.number_format = "m/d/yy"
                         else:
                             logging.warning(f"Error formatting End Date row {row_num}: value '{cell.value}' not parseable")
 
-            # --- 7) (Optional) Set the Priority column to 4 if it exists ---
+            # 6) Format Month if present.
+            if "Month" in columns:
+                month_col = columns.index("Month") + 1
+                for row_num in range(2, len(df) + 2):
+                    cell = sheet.cell(row=row_num, column=month_col)
+                    month_val = df["Month"].iloc[row_num - 2]
+                    if pd.notna(month_val):
+                        cell.value = month_val
+                        cell.number_format = "mmm-yy"
+                    else:
+                        cell.value = None
+
+            # 7) Set the Priority column to 4 if it exists.
             if "Priority" in columns:
                 priority_col = columns.index("Priority") + 1
                 for row_num in range(2, len(df) + 2):
                     sheet.cell(row=row_num, column=priority_col, value=4)
-            
-            # --- 8) Remove extra rows if the template has more rows than the CSV data ---
+
+            # 8) Remove extra rows.
             if sheet.max_row > len(df) + 1:
                 sheet.delete_rows(len(df) + 2, sheet.max_row - (len(df) + 1))
-            
-            # Ensure the output directory exists
+
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            
-            # Save the final workbook
             workbook.save(output_path)
-            logging.info("Excel file saved successfully with formulas, formatting, Priority set, and time columns fixed.")
-        
+            logging.info("Excel file saved successfully with formulas and formatting.")
+
         except Exception as e:
             logging.error(f"Error saving to Excel: {str(e)}")
             raise
+
 
 
     def _parse_time_24h(self, time_str: str) -> Optional[float]:
@@ -498,7 +491,8 @@ Log File: {log_file}
                 contract=user_inputs['contract'],
                 is_worldlink=user_inputs.get('is_worldlink', False)
             )
-            
+            df = transform_month_column(df)
+
             logging.info("Saving output file...")
             output_filename = f"processed_{os.path.splitext(filename)[0]}.xlsx"
             output_path = os.path.join(self.config.paths.output_dir, output_filename)

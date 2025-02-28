@@ -1,8 +1,61 @@
 import pandas as pd
+from datetime import datetime
 from typing import Dict, Tuple, Optional, Callable
 import logging
 
 # --- Pure Transformation Functions ---
+def compute_broadcast_month(air_date: pd.Timestamp) -> pd.Timestamp:
+    """
+    Replicates your broadcast logic:
+      - If the next Sunday crosses into next month (Dec->Jan), shift year.
+      - Otherwise just use the month of that next Sunday, day=1.
+    """
+    if pd.isna(air_date):
+        return None  # No date => no broadcast month
+    # In pandas, weekday(): Monday=0, Sunday=6
+    days_until_sunday = 6 - air_date.weekday()
+    next_sunday = air_date + pd.Timedelta(days=days_until_sunday)
+
+    # If we cross from Dec into Jan, increment year
+    year = air_date.year
+    if air_date.month == 12 and next_sunday.month == 1:
+        year += 1
+
+    return pd.Timestamp(year=year, month=next_sunday.month, day=1)
+
+
+def transform_month_column(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Creates a real 'Month' column based on 'Air Date' and
+    the value in 'Billing Type' (assumed to be 'Calendar' or 'Broadcast').
+
+    If 'Billing Type' = 'Calendar', just use the Air Date.
+    If 'Billing Type' = 'Broadcast', use the broadcast logic.
+    """
+    if "Air Date" not in df.columns:
+        logging.warning("No 'Air Date' column found, cannot compute Month.")
+        return df
+
+    if "Billing Type" not in df.columns:
+        logging.warning("No 'Billing Type' column found, defaulting all to Calendar.")
+        df["Billing Type"] = "Calendar"
+
+    def compute_month(row):
+        ad = row["Air Date"]
+        if pd.isna(ad):
+            return None
+        if row["Billing Type"] == "Calendar":
+            return ad  # Just use the actual date
+        else:
+            return compute_broadcast_month(ad)
+
+    # Convert Air Date to real datetime if possible
+    df["Air Date"] = pd.to_datetime(df["Air Date"], errors="coerce")
+
+    # Now create 'Month' column
+    df["Month"] = df.apply(compute_month, axis=1)
+    return df
+
 
 def generate_billcode(text_box_180: str, text_box_171: str) -> str:
     """Generate bill code by combining two text boxes."""
@@ -148,13 +201,14 @@ class FileProcessor:
     def load_and_clean_data(self, file_path: str) -> Optional[pd.DataFrame]:
         """
         Load data from the selected input file and perform initial cleaning.
+        Skips rows where 'dateschedule' is 'Unplaced', and prints the count.
         """
         try:
             logging.info(f"Loading data from {file_path}")
             df = pd.read_csv(file_path, skiprows=3)
             original_count = len(df)
 
-            # Drop empty rows
+            # Drop completely empty rows
             df = df.dropna(how="all")
             if len(df) < original_count:
                 logging.warning(f"Dropped {original_count - len(df)} empty rows")
@@ -164,14 +218,19 @@ class FileProcessor:
             before_required = len(df)
             df = df[df[required_columns].notna().all(axis=1)]
             if len(df) < before_required:
-                logging.warning(
-                    f"Dropped {before_required - len(df)} rows with missing required values"
-                )
+                logging.warning(f"Dropped {before_required - len(df)} rows missing required columns")
 
-            # Remove rows containing "Textbox" in IMPORTO2
+            # Skip rows containing "Textbox" in IMPORTO2
             df = df[~df["IMPORTO2"].astype(str).str.contains("Textbox", na=False)]
+
             # Drop columns that match certain patterns
             df = df[df.columns[~df.columns.str.contains("Textbox97|tot|Textbox61|Textbox53")]]
+
+            # Skip rows where dateschedule == 'Unplaced'
+            unplaced_count = df[df["dateschedule"].astype(str).str.lower() == "unplaced"].shape[0]
+            if unplaced_count > 0:
+                print(f"Skipping {unplaced_count} lines with 'Unplaced' in 'dateschedule'")
+                df = df[df["dateschedule"].astype(str).str.lower() != "unplaced"]
 
             # Clean numeric fields
             df["id_contrattirighe"] = df["id_contrattirighe"].apply(self.clean_numeric)
@@ -204,9 +263,11 @@ class FileProcessor:
                 raise ValueError("No valid data rows found after cleaning")
 
             return df
+
         except Exception as e:
             logging.error(f"Error in load_and_clean_data: {str(e)}")
             raise
+
 
     def apply_transformations(self, df: pd.DataFrame, text_box_180: str, text_box_171: str) -> pd.DataFrame:
         """
