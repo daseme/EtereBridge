@@ -76,11 +76,8 @@ def prompt_for_order_type():
         print("Enter A, N, or T.")
 
 def prompt_for_estimate():
-    while True:
-        estimate = input("\nWhat is the estimate number? ").strip()
-        if estimate:
-            return estimate
-        print("Please enter a value.")
+    """Prompt user for estimate number (optional). Returns estimate as string (empty if not provided)."""
+    return input("\nWhat is the estimate number? (Optional, press Enter to skip): ").strip()
 
 def prompt_for_type(config):
     print("\nType Selection:")
