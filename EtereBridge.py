@@ -286,28 +286,44 @@ Log File: {log_file}
                 sheet.cell(row=1, column=col_num, value=column_title)
             
             # --- 3) Write data (row 2 onward) and apply template formatting ---
+            # --- 3) Write data (row 2 onward) and apply template formatting ---
             for row_num, row_data in enumerate(df.values, start=2):
                 for col_num, cell_value in enumerate(row_data, start=1):
                     cell = sheet.cell(row=row_num, column=col_num)
+                    col_name = columns[col_num - 1]
                     
                     # If there's a formula in the template for this column, use it
                     if col_num in template_formulas:
                         formula = template_formulas[col_num]
-                        # Replace row reference '2' with the actual row number
                         formula = formula.replace('2', str(row_num))
                         cell.value = formula
                     else:
-                        cell.value = cell_value
+                        if col_name in ("Time In", "Time Out"):
+                            time_serial = self._parse_time_24h(cell_value)
+                            if time_serial is not None:
+                                cell.value = time_serial
+                                # Force custom time format, e.g. 37:30:55
+                                cell.number_format = "[h]:mm:ss"
+                            else:
+                                cell.value = cell_value
+                        else:
+                            # Normal columns: just set the value
+                            cell.value = cell_value
                     
-                    # Apply stored formatting (style, number_format, etc.)
+                    # Apply template formatting for non-time columns only
                     if col_num in template_formatting:
                         fmt = template_formatting[col_num]
-                        cell.style = fmt['style']
-                        cell.number_format = fmt['number_format']
-                        cell.border = fmt['border']
+                        # Always apply fill, border, font, alignment
                         cell.fill = fmt['fill']
+                        cell.border = fmt['border']
                         cell.font = fmt['font']
                         cell.alignment = fmt['alignment']
+                        
+                        # But skip style/number_format for Time In/Time Out
+                        if col_name not in ("Time In", "Time Out"):
+                            cell.style = fmt['style']
+                            cell.number_format = fmt['number_format']
+
             
             # --- 4) Format the Month column if needed (unchanged if it's working fine) ---
             if "Month" in columns:
@@ -352,8 +368,6 @@ Log File: {log_file}
                         else:
                             logging.warning(f"Error formatting End Date row {row_num}: value '{cell.value}' not parseable")
 
-
-            
             # --- 7) (Optional) Set the Priority column to 4 if it exists ---
             if "Priority" in columns:
                 priority_col = columns.index("Priority") + 1
@@ -369,11 +383,31 @@ Log File: {log_file}
             
             # Save the final workbook
             workbook.save(output_path)
-            logging.info("Excel file saved successfully with formulas, formatting, and Priority Number preserved")
+            logging.info("Excel file saved successfully with formulas, formatting, Priority set, and time columns fixed.")
         
         except Exception as e:
             logging.error(f"Error saving to Excel: {str(e)}")
             raise
+
+
+    def _parse_time_24h(self, time_str: str) -> Optional[float]:
+        """
+        Converts 'time_str' (24-hour or 12-hour) into an Excel time serial (a float).
+        The result is (total seconds)/86400. Returns None if parsing fails.
+        """
+        if not time_str:
+            return None
+        try:
+            dt = pd.to_datetime(time_str, format="%H:%M:%S", errors="raise")
+        except ValueError:
+            try:
+                dt = pd.to_datetime(time_str, format="%I:%M:%S %p", errors="raise")
+            except ValueError:
+                return None
+        total_seconds = dt.hour * 3600 + dt.minute * 60 + dt.second
+        return total_seconds / 86400.0
+
+
 
     def generate_processing_summary(self, df: pd.DataFrame, input_file: str, output_file: str, user_inputs: Dict) -> Dict:
         try:
