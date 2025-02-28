@@ -15,7 +15,7 @@ from tqdm import tqdm
 from utils import safe_convert_date
 from config_manager import config_manager
 from file_processor import FileProcessor, transform_month_column
-from user_interface import collect_user_inputs, verify_languages  # Updated import
+from user_interface import collect_user_inputs, verify_languages, print_header, select_processing_mode  # Updated import
 
 @dataclass
 class ProcessingResult:
@@ -43,21 +43,6 @@ class EtereBridge:
         # Initialize FileProcessor
         self.file_processor = FileProcessor(self.config)
         
-    def print_header(self):
-        """Display a welcome header with basic instructions."""
-        header = """
-╔════════════════════════════════════════════════════════════════════════════╗
-║                        Excel File Processing Tool                           ║
-╚════════════════════════════════════════════════════════════════════════════╝
-
-This tool helps you process and transform Excel files according to specified formats.
-Follow the prompts below to begin processing your files.
-
-Version: 2.0
-Log File: {log_file}
-        """.format(log_file=self.log_file)
-        print(header)
-
     def list_files(self) -> List[str]:
         """List all available files in the input directory."""
         files = [f for f in os.listdir(self.config.paths.input_dir) if f.endswith('.csv')]
@@ -67,33 +52,20 @@ Log File: {log_file}
             sys.exit(1)
         return files
 
-    def select_processing_mode(self) -> str:
-        """Ask the user whether to process all files or select one at a time."""
-        print("\n" + "-"*80)
-        print("Processing Mode Selection".center(80))
-        print("-"*80)
-        print("\nChoose how you want to process your files:")
-        print("  [A] Process all files automatically")
-        print("  [S] Select and process files one at a time")
-        
-        while True:
-            choice = input("\nYour choice (A/S): ").strip().upper()
-            if choice in ['A', 'S']:
-                return choice
-            print("❌ Invalid choice. Please enter 'A' for all files or 'S' to select files.")
-
     def get_worldlink_defaults(self) -> Dict:
-        """Return default values for WorldLink orders."""
         return {
             "billing_type": "Broadcast",
             "revenue_type": "Direct Response Sales",
             "agency_flag": "Agency",
             "sales_person": "House",
-            "agency_fee": 0.15,  # Standard 15%
+            "agency_fee": 0.15,
             "type": "COM",
             "affidavit": "Y",
-            "is_worldlink": True  # Flag to identify WorldLink orders
+            "is_worldlink": True,
+            "estimate": "",       # default empty string
+            "contract": "DEFAULT" # or an empty string if appropriate
         }
+
 
     def select_input_file(self, files: List[str]) -> Optional[str]:
         """Prompt the user to select a file from the input directory."""
@@ -647,7 +619,7 @@ Log File: {log_file}
         print(f"\nDetailed logs available at: {self.log_file}")
 
     def main(self):
-        self.print_header()
+        print_header(self.log_file)
         
         try:
             files = self.list_files()
@@ -655,7 +627,7 @@ Log File: {log_file}
                 print("No files found to process. Please add files and try again.")
                 return
 
-            choice = self.select_processing_mode()
+            choice = select_processing_mode()
 
             if choice == 'A':
                 print("\n🔄 Processing all files automatically...")

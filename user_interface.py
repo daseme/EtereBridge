@@ -162,3 +162,29 @@ def verify_languages(df: pd.DataFrame, language_info):
             except ValueError:
                 print("Invalid input.")
     return row_languages
+
+def print_header(log_file):
+    header = f"""
+    ╔════════════════════════════════════════════════════════════════════════════╗
+    ║                        Excel File Processing Tool                           ║
+    ╚════════════════════════════════════════════════════════════════════════════╝
+
+    Version: 2.0
+    Log File: {log_file}
+    """
+    print(header)
+
+def select_processing_mode() -> str:
+    """Ask the user whether to process all files or select one at a time."""
+    print("\n" + "-"*80)
+    print("Processing Mode Selection".center(80))
+    print("-"*80)
+    print("\nChoose how you want to process your files:")
+    print("  [A] Process all files automatically")
+    print("  [S] Select and process files one at a time")
+        
+    while True:
+        choice = input("\nYour choice (A/S): ").strip().upper()
+        if choice in ['A', 'S']:
+            return choice
+        print("❌ Invalid choice. Please enter 'A' for all files or 'S' to select files.")
