@@ -1,6 +1,7 @@
 # user_interface.py
 import sys
 import pandas as pd
+from typing import List
 
 
 def prompt_for_sales_person(config):
@@ -188,3 +189,40 @@ def select_processing_mode() -> str:
         if choice in ['A', 'S']:
             return choice
         print("❌ Invalid choice. Please enter 'A' for all files or 'S' to select files.")
+
+def display_batch_summary(
+    successful: List["ProcessingResult"],  # forward reference as a string
+    failed: List["ProcessingResult"],
+    log_file: str
+):
+
+    print("\n" + "="*80)
+    print("Batch Processing Summary".center(80))
+    print("="*80)
+    
+    total = len(successful) + len(failed)
+    success_rate = (len(successful) / total * 100) if total > 0 else 0
+    
+    print(f"\nTotal files processed: {total}")
+    print(f"Successfully processed: {len(successful)} ({success_rate:.1f}%)")
+    print(f"Failed to process: {len(failed)}")
+    
+    if failed:
+        print("\nFailed Files:")
+        for result in failed:
+            print(f"❌ {result.filename}")
+            print(f"   Error: {result.error_message}")
+    
+    if any(r.warnings for r in successful):
+        print("\nWarnings:")
+        for result in successful:
+            if result.warnings:
+                print(f"⚠️ {result.filename}:")
+                for warning in result.warnings:
+                    print(f"   - {warning}")
+    if successful:
+        print("\nProcessed Files:")
+        for result in successful:
+            print(f"✅ {result.filename} -> {result.output_file}")
+
+    print(f"\nDetailed logs available at: {log_file}")

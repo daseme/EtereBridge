@@ -6,16 +6,17 @@ from copy import copy
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
-from openpyxl import load_workbook  # Add this import
-from openpyxl.utils import get_column_letter  # Add this import
-import json  # Add this import
+from openpyxl import load_workbook 
+from openpyxl.utils import get_column_letter
+import json 
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from tqdm import tqdm
 from utils import safe_convert_date
 from config_manager import config_manager
 from file_processor import FileProcessor, transform_month_column
-from user_interface import collect_user_inputs, verify_languages, print_header, select_processing_mode  # Updated import
+from user_interface import collect_user_inputs, verify_languages, print_header, select_processing_mode, display_batch_summary
+
 
 @dataclass
 class ProcessingResult:
@@ -566,7 +567,8 @@ class EtereBridge:
                     error_message=str(e)
                 ))
         
-        self._display_batch_summary(successful, failed)
+        display_batch_summary(successful, failed, self.log_file)
+        
         return {"successful": successful, "failed": failed}
 
     def _save_interim_results(self, successful: List[ProcessingResult], failed: List[ProcessingResult]):
@@ -585,38 +587,6 @@ class EtereBridge:
             results["failed"].append(vars(result))
         with open(interim_file, 'w') as f:
             json.dump(results, f, indent=2)
-
-    def _display_batch_summary(self, successful: List[ProcessingResult], failed: List[ProcessingResult]):
-        print("\n" + "="*80)
-        print("Batch Processing Summary".center(80))
-        print("="*80)
-        
-        total = len(successful) + len(failed)
-        success_rate = (len(successful) / total * 100) if total > 0 else 0
-        
-        print(f"\nTotal files processed: {total}")
-        print(f"Successfully processed: {len(successful)} ({success_rate:.1f}%)")
-        print(f"Failed to process: {len(failed)}")
-        
-        if failed:
-            print("\nFailed Files:")
-            for result in failed:
-                print(f"❌ {result.filename}")
-                print(f"   Error: {result.error_message}")
-        
-        if any(r.warnings for r in successful):
-            print("\nWarnings:")
-            for result in successful:
-                if result.warnings:
-                    print(f"⚠️ {result.filename}:")
-                    for warning in result.warnings:
-                        print(f"   - {warning}")
-        if successful:
-            print("\nProcessed Files:")
-            for result in successful:
-                print(f"✅ {result.filename} -> {result.output_file}")
-
-        print(f"\nDetailed logs available at: {self.log_file}")
 
     def main(self):
         print_header(self.log_file)
