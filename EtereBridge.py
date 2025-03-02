@@ -15,7 +15,7 @@ from tqdm import tqdm
 from utils import safe_convert_date
 from config_manager import config_manager
 from file_processor import FileProcessor, transform_month_column
-from user_interface import collect_user_inputs, verify_languages, print_header, select_processing_mode, display_batch_summary
+from user_interface import collect_user_inputs, verify_languages, print_header, select_processing_mode, display_batch_summary, choose_input_file
 
 
 @dataclass
@@ -66,41 +66,6 @@ class EtereBridge:
             "estimate": "",       # default empty string
             "contract": "DEFAULT" # or an empty string if appropriate
         }
-
-
-    def select_input_file(self, files: List[str]) -> Optional[str]:
-        """Prompt the user to select a file from the input directory."""
-        print("\n" + "-"*80)
-        print("File Selection".center(80))
-        print("-"*80)
-        print("\nAvailable files for processing:")
-        
-        # Create two columns if there are many files
-        mid_point = (len(files) + 1) // 2
-        for i, filename in enumerate(files, 1):
-            line = f"  [{i:2d}] {filename}"
-            if i <= mid_point and i + mid_point <= len(files):
-                second_file = files[i + mid_point - 1]
-                second_item = f"  [{i + mid_point:2d}] {second_file}"
-                print(f"{line:<40} {second_item}")
-            else:
-                print(line)
-        
-        while True:
-            try:
-                choice = input("\nEnter the number of the file you want to process (or 'q' to quit): ").strip()
-                if choice.lower() == 'q':
-                    print("\nExiting program...")
-                    sys.exit(0)
-                choice = int(choice)
-                if 1 <= choice <= len(files):
-                    selected_file = files[choice - 1]
-                    print(f"\n✅ Selected: {selected_file}")
-                    return os.path.join(self.config.paths.input_dir, selected_file)
-                else:
-                    print(f"❌ Please enter a number between 1 and {len(files)}")
-            except ValueError:
-                print("❌ Please enter a valid number or 'q' to quit")
 
     def extract_header_values(self, file_path: str) -> Tuple[str, str]:
         """Extract header values from first section of CSV."""
@@ -568,7 +533,7 @@ class EtereBridge:
                 ))
         
         display_batch_summary(successful, failed, self.log_file)
-        
+
         return {"successful": successful, "failed": failed}
 
     def _save_interim_results(self, successful: List[ProcessingResult], failed: List[ProcessingResult]):
@@ -605,7 +570,7 @@ class EtereBridge:
                 results = self.process_batch(file_paths)
             elif choice == 'S':
                 while True:
-                    file_path = self.select_input_file(files)
+                    file_path = choose_input_file(files, self.config.paths.input_dir)
                     if file_path:
                         results = self.process_batch([file_path], show_progress=False)
                     print("\n" + "-"*80)
