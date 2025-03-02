@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Dict, Tuple, Optional, Callable
 import logging
 
+
 # --- Pure Transformation Functions ---
 def compute_broadcast_month(air_date: pd.Timestamp) -> pd.Timestamp:
     """
@@ -67,7 +68,10 @@ def generate_billcode(text_box_180: str, text_box_171: str) -> str:
         return text_box_180
     return ""
 
-def apply_market_replacements(df: pd.DataFrame, market_replacements: Dict[str, str]) -> pd.DataFrame:
+
+def apply_market_replacements(
+    df: pd.DataFrame, market_replacements: Dict[str, str]
+) -> pd.DataFrame:
     """Replace market names using provided mapping."""
     if "Market" not in df.columns:
         logging.error("Market column not found in DataFrame")
@@ -76,7 +80,10 @@ def apply_market_replacements(df: pd.DataFrame, market_replacements: Dict[str, s
     df["Market"] = df["Market"].replace(market_replacements)
     return df
 
-def transform_gross_rate(df: pd.DataFrame, safe_to_numeric_func: Callable[[any], float]) -> pd.DataFrame:
+
+def transform_gross_rate(
+    df: pd.DataFrame, safe_to_numeric_func: Callable[[any], float]
+) -> pd.DataFrame:
     """Clean and format the Gross Rate column."""
     if "Gross Rate" in df.columns:
         df["Gross Rate"] = (
@@ -91,7 +98,10 @@ def transform_gross_rate(df: pd.DataFrame, safe_to_numeric_func: Callable[[any],
         df["Gross Rate"] = df["Gross Rate"].map("${:,.2f}".format)
     return df
 
-def transform_length(df: pd.DataFrame, round_func: Callable[[any], int]) -> pd.DataFrame:
+
+def transform_length(
+    df: pd.DataFrame, round_func: Callable[[any], int]
+) -> pd.DataFrame:
     """Transform the Length column by rounding and formatting."""
     if "Length" in df.columns:
         df["Length"] = df["Length"].apply(round_func)
@@ -99,6 +109,7 @@ def transform_length(df: pd.DataFrame, round_func: Callable[[any], int]) -> pd.D
             lambda x: str(x).split()[-1].zfill(8)
         )
     return df
+
 
 def transform_line_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Convert Line and '#' columns to integer."""
@@ -108,7 +119,9 @@ def transform_line_columns(df: pd.DataFrame) -> pd.DataFrame:
         df["#"] = pd.to_numeric(df["#"], errors="coerce").fillna(0).astype(int)
     return df
 
+
 # --- New Time Formatting Functions ---
+
 
 def unify_time_format(time_str: str, desired_format: str = "%H:%M:%S") -> str:
     """
@@ -129,6 +142,7 @@ def unify_time_format(time_str: str, desired_format: str = "%H:%M:%S") -> str:
         logging.warning(f"Error unifying time format '{time_str}': {e}")
         return time_str
 
+
 def transform_times(df: pd.DataFrame) -> pd.DataFrame:
     """
     Apply consistent time formatting to Time In and Time Out columns.
@@ -139,7 +153,9 @@ def transform_times(df: pd.DataFrame) -> pd.DataFrame:
         df["Time Out"] = df["Time Out"].astype(str).apply(unify_time_format)
     return df
 
+
 # --- FileProcessor Class ---
+
 
 class FileProcessor:
     def __init__(self, config):
@@ -184,8 +200,6 @@ class FileProcessor:
             logging.warning(f"Error rounding seconds '{seconds}': {e}")
             return 0
 
-
-
     def safe_to_numeric(self, value):
         """
         Safely convert a value to numeric.
@@ -218,18 +232,28 @@ class FileProcessor:
             before_required = len(df)
             df = df[df[required_columns].notna().all(axis=1)]
             if len(df) < before_required:
-                logging.warning(f"Dropped {before_required - len(df)} rows missing required columns")
+                logging.warning(
+                    f"Dropped {before_required - len(df)} rows missing required columns"
+                )
 
             # Skip rows containing "Textbox" in IMPORTO2
             df = df[~df["IMPORTO2"].astype(str).str.contains("Textbox", na=False)]
 
             # Drop columns that match certain patterns
-            df = df[df.columns[~df.columns.str.contains("Textbox97|tot|Textbox61|Textbox53")]]
+            df = df[
+                df.columns[
+                    ~df.columns.str.contains("Textbox97|tot|Textbox61|Textbox53")
+                ]
+            ]
 
             # Skip rows where dateschedule == 'Unplaced'
-            unplaced_count = df[df["dateschedule"].astype(str).str.lower() == "unplaced"].shape[0]
+            unplaced_count = df[
+                df["dateschedule"].astype(str).str.lower() == "unplaced"
+            ].shape[0]
             if unplaced_count > 0:
-                print(f"Skipping {unplaced_count} lines with 'Unplaced' in 'dateschedule'")
+                print(
+                    f"Skipping {unplaced_count} lines with 'Unplaced' in 'dateschedule'"
+                )
                 df = df[df["dateschedule"].astype(str).str.lower() != "unplaced"]
 
             # Clean numeric fields
@@ -255,7 +279,9 @@ class FileProcessor:
 
             # Split timerange2 into Time In / Time Out
             if "timerange2" in df.columns:
-                df[["Time In", "Time Out"]] = df["timerange2"].str.split("-", expand=True)
+                df[["Time In", "Time Out"]] = df["timerange2"].str.split(
+                    "-", expand=True
+                )
 
             # Ensure no empty "Line" entries
             df = df[df["Line"].notna()]
@@ -268,8 +294,9 @@ class FileProcessor:
             logging.error(f"Error in load_and_clean_data: {str(e)}")
             raise
 
-
-    def apply_transformations(self, df: pd.DataFrame, text_box_180: str, text_box_171: str) -> pd.DataFrame:
+    def apply_transformations(
+        self, df: pd.DataFrame, text_box_180: str, text_box_171: str
+    ) -> pd.DataFrame:
         """
         Apply data transformations by:
          - Generating the bill code.
