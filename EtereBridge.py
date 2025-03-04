@@ -539,22 +539,17 @@ class EtereBridge:
                 filename=filename, success=False, error_message=error_msg
             )
 
-    def process_batch(
-        self, files: List[str], show_progress: bool = True
-    ) -> Dict[str, List[ProcessingResult]]:
+    def process_batch(self, files: List[str], show_progress: bool = True) -> dict:
         successful = []
         failed = []
 
         batch_settings = prompt_batch_settings(self.config)
+        is_worldlink = batch_settings.get("is_worldlink", False)
 
-        if batch_settings.get("is_worldlink"):
-            base_user_inputs = self.get_worldlink_defaults()
-            logging.info("Using WorldLink default settings for batch processing")
-        else:
-            if batch_settings.get("inputs") is not None:
-                base_user_inputs = batch_settings.get("inputs")
-            else:
-                base_user_inputs = None
+        # For non-worldlink, use shared inputs if available.
+        base_user_inputs = None
+        if not is_worldlink:
+            base_user_inputs = batch_settings.get("inputs") if batch_settings.get("inputs") else None
 
         files_iter = tqdm(files, desc="Processing files") if show_progress else files
 
@@ -563,12 +558,19 @@ class EtereBridge:
                 df = self.file_processor.load_and_clean_data(file_path)
                 detected_languages = self.file_processor.detect_languages(df)
 
-                if base_user_inputs:
-                    file_inputs = base_user_inputs.copy()
-                else:
-                    file_inputs = collect_user_inputs(self.config)
-
                 print(f"\nProcessing file: {os.path.basename(file_path)}")
+
+                # Build file-specific user inputs.
+                if is_worldlink:
+                    # Start with default WorldLink settings.
+                    file_inputs = self.get_worldlink_defaults()
+                    # Override contract and estimate with per-file prompts.
+                    from user_interface import prompt_for_contract, prompt_for_estimate
+                    file_inputs["contract"] = prompt_for_contract()
+                    file_inputs["estimate"] = prompt_for_estimate()
+                else:
+                    file_inputs = base_user_inputs.copy() if base_user_inputs else collect_user_inputs(self.config)
+
                 primary_language = verify_languages(df, detected_languages)
                 if isinstance(primary_language, pd.Series):
                     primary_language = primary_language.to_dict()
@@ -594,8 +596,8 @@ class EtereBridge:
                 )
 
         display_batch_summary(successful, failed, self.log_file)
-
         return {"successful": successful, "failed": failed}
+
 
     def _save_interim_results(
         self, successful: List[ProcessingResult], failed: List[ProcessingResult]
