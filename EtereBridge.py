@@ -23,6 +23,8 @@ from user_interface import (
     display_batch_summary,
     choose_input_file,
     prompt_batch_settings,
+    prompt_for_contract,
+    prompt_for_estimate,
 )
 
 
@@ -543,35 +545,28 @@ class EtereBridge:
         # For non-worldlink, use shared inputs if available.
         base_user_inputs = None
         if not is_worldlink:
-            base_user_inputs = batch_settings.get("inputs") if batch_settings.get("inputs") else None
+            base_user_inputs = batch_settings.get("inputs") or None
 
         files_iter = tqdm(files, desc="Processing files") if show_progress else files
 
         for file_path in files_iter:
             try:
-                df = self.file_processor.load_and_clean_data(file_path)
-                detected_languages = self.file_processor.detect_languages(df)
-
                 print(f"\nProcessing file: {os.path.basename(file_path)}")
 
                 # Build file-specific user inputs.
                 if is_worldlink:
-                    # Start with default WorldLink settings.
                     file_inputs = self.get_worldlink_defaults()
-                    # Override contract and estimate with per-file prompts.
-                    from user_interface import prompt_for_contract, prompt_for_estimate
+                    # Per-file prompts for contract, estimate
                     file_inputs["contract"] = prompt_for_contract()
                     file_inputs["estimate"] = prompt_for_estimate()
                 else:
+                    # If the batch shares user inputs, clone them; else prompt
                     file_inputs = base_user_inputs.copy() if base_user_inputs else collect_user_inputs(self.config)
 
-                primary_language = verify_languages(df, detected_languages)
-                if isinstance(primary_language, pd.Series):
-                    primary_language = primary_language.to_dict()
-                file_inputs["language"] = primary_language
-
+                # Now let process_file() handle all detection & transformations
                 result = self.process_file(file_path, file_inputs)
 
+                # Sort the result
                 if result.success:
                     successful.append(result)
                 else:
@@ -591,7 +586,6 @@ class EtereBridge:
 
         display_batch_summary(successful, failed, self.log_file)
         return {"successful": successful, "failed": failed}
-
 
     def _save_interim_results(
         self, successful: List[ProcessingResult], failed: List[ProcessingResult]
