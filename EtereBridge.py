@@ -2,13 +2,14 @@ import os
 import sys
 import logging
 import csv
+import json
 from copy import copy
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
-import json
+from openpyxl.styles import Alignment
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from tqdm import tqdm
@@ -232,6 +233,26 @@ class EtereBridge:
     def save_to_excel(
         self, df: pd.DataFrame, output_path: str, agency_fee: Optional[float] = 0.15
     ):
+        """
+        Write the final DataFrame 'df' to an Excel file, preserving formulas,
+        template formatting, and special handling for time/date columns.
+
+        This method:
+        1. Loads a workbook template (Excel file).
+        2. Copies formulas/formatting from the template row 2.
+        3. Writes DataFrame headers into row 1.
+        4. Inserts data from row 2 onward.
+        5. Applies date/time formatting for Air Date, End Date, Time In, Time Out, and Length.
+            - 'Length' is stored as a numeric time fraction (seconds / 86400), then displayed as [h]:mm:ss.
+            - The cell is also centered horizontally.
+        6. Removes extra template rows at the bottom.
+        7. Saves the workbook to 'output_path'.
+
+        Args:
+            df (pd.DataFrame): The final, transformed data to be written to Excel.
+            output_path (str): The path where the completed Excel file is saved.
+            agency_fee (float, optional): An optional agency fee (not used directly here).
+        """
         try:
             template_path = self.config.paths.template_path
             logging.info(f"Loading template from: {template_path}")
@@ -240,13 +261,16 @@ class EtereBridge:
 
             columns = self.config.final_columns
 
-            # 1) Extract formulas and formatting from template row 2.
+            # --- 1) Extract formulas and formatting from template row 2. ---
             template_formulas = {}
             template_formatting = {}
+
             for col in range(1, len(columns) + 1):
                 cell = sheet.cell(row=2, column=col)
+                # If the template cell has a formula, store it
                 if cell.value and str(cell.value).startswith("="):
                     template_formulas[col] = cell.value
+                # Store style and formatting information for later reuse
                 template_formatting[col] = {
                     "style": cell.style,
                     "number_format": cell.number_format,
@@ -256,28 +280,34 @@ class EtereBridge:
                     "alignment": copy(cell.alignment),
                 }
 
-            # 2) Write headers in row 1.
+            # --- 2) Write headers in row 1. ---
             for col_num, column_title in enumerate(columns, start=1):
                 sheet.cell(row=1, column=col_num, value=column_title)
 
-            # 3) Write data starting at row 2.
+            # --- 3) Write data starting at row 2. ---
             for row_num, row_data in enumerate(df.values, start=2):
                 for col_num, cell_value in enumerate(row_data, start=1):
                     cell = sheet.cell(row=row_num, column=col_num)
                     col_name = columns[col_num - 1]
 
+                    # Handle Time In/Time Out as numeric time
                     if col_name in ("Time In", "Time Out"):
                         time_serial = self._parse_time_24h(cell_value)
                         if time_serial is not None:
                             cell.value = time_serial
                             cell.number_format = "[h]:mm:ss"
                         else:
+                            # If parsing fails, store it "as is"
                             cell.value = cell_value
+
+                    # If col_name is End Date, we try to apply either the template's formula or link to Air Date
                     elif col_name == "End Date":
                         if col_num in template_formulas:
                             formula = template_formulas[col_num]
+                            # Replace the template row reference (e.g. "2") with the actual current row
                             cell.value = formula.replace("2", str(row_num))
                         else:
+                            # If there's no formula in the template for this column
                             try:
                                 air_date_idx = columns.index("Air Date") + 1
                                 air_date_letter = get_column_letter(air_date_idx)
@@ -287,23 +317,51 @@ class EtereBridge:
                                     f"Error setting End Date formula at row {row_num}: {e}"
                                 )
                                 cell.value = cell_value
+
+                    # If the template has a stored formula for this column, apply it
                     elif col_num in template_formulas:
                         formula = template_formulas[col_num]
                         cell.value = formula.replace("2", str(row_num))
+
+                    # If col_name is Length, treat it as seconds -> fraction of a 24-hour day
+                    elif col_name == "Length":
+                        try:
+                            # Convert cell_value (seconds) to fraction-of-day for Excel
+                            if pd.notna(cell_value):
+                                length_in_seconds = float(cell_value)
+                                time_fraction = length_in_seconds / 86400  # 86,400s = 24h
+                            else:
+                                time_fraction = 0
+                            cell.value = time_fraction
+                            # Display format as hours:minutes:seconds, e.g. "0:05:30"
+                            cell.number_format = "[h]:mm:ss"
+                            # Align center so it looks neat in Excel
+                            cell.alignment = Alignment(horizontal="center")
+                        except Exception as e:
+                            logging.warning(
+                                f"Error converting Length at row {row_num}: {e}. Storing raw value."
+                            )
+                            cell.value = cell_value
+
                     else:
+                        # Normal cell assignment
                         cell.value = cell_value
 
+                    # --- Apply template formatting where relevant ---
                     if col_num in template_formatting:
                         fmt = template_formatting[col_num]
                         cell.fill = fmt["fill"]
                         cell.border = fmt["border"]
                         cell.font = fmt["font"]
                         cell.alignment = fmt["alignment"]
-                        if col_name not in ("Time In", "Time Out"):
+                        # Only re-apply the template's style/number format
+                        # if this column isn't Time In or Time Out or Length
+                        # (since we manually set those above).
+                        if col_name not in ("Time In", "Time Out", "Length", "End Date"):
                             cell.style = fmt["style"]
                             cell.number_format = fmt["number_format"]
 
-            # 4) Format Air Date with 2-digit year (m/d/yy).
+            # --- 4) Format Air Date with 2-digit year (m/d/yy). ---
             if "Air Date" in columns:
                 air_date_col = columns.index("Air Date") + 1
                 for row_num in range(2, len(df) + 2):
@@ -318,7 +376,7 @@ class EtereBridge:
                                 f"Error formatting Air Date row {row_num}: value '{cell.value}' not parseable"
                             )
 
-            # 5) Format End Date with 2-digit year (m/d/yy).
+            # --- 5) Format End Date with 2-digit year (m/d/yy). ---
             if "End Date" in columns:
                 end_date_col = columns.index("End Date") + 1
                 for row_num in range(2, len(df) + 2):
@@ -333,7 +391,7 @@ class EtereBridge:
                                 f"Error formatting End Date row {row_num}: value '{cell.value}' not parseable"
                             )
 
-            # 6) Format Month if present.
+            # --- 6) Format Month if present. (e.g. "Jan-24") ---
             if "Month" in columns:
                 month_col = columns.index("Month") + 1
                 for row_num in range(2, len(df) + 2):
@@ -345,16 +403,17 @@ class EtereBridge:
                     else:
                         cell.value = None
 
-            # 7) Set the Priority column to 4 if it exists.
+            # --- 7) Set the Priority column to 4 if it exists. ---
             if "Priority" in columns:
                 priority_col = columns.index("Priority") + 1
                 for row_num in range(2, len(df) + 2):
                     sheet.cell(row=row_num, column=priority_col, value=4)
 
-            # 8) Remove extra rows.
+            # --- 8) Remove extra rows (from the template) beyond the data. ---
             if sheet.max_row > len(df) + 1:
                 sheet.delete_rows(len(df) + 2, sheet.max_row - (len(df) + 1))
 
+            # Ensure output directory exists, then save
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             workbook.save(output_path)
             logging.info("Excel file saved successfully with formulas and formatting.")
@@ -362,6 +421,7 @@ class EtereBridge:
         except Exception as e:
             logging.error(f"Error saving to Excel: {str(e)}")
             raise
+
 
     def _parse_time_24h(self, time_str: str) -> Optional[float]:
         """

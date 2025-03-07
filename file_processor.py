@@ -98,19 +98,6 @@ def transform_gross_rate(
         df["Gross Rate"] = df["Gross Rate"].map("${:,.2f}".format)
     return df
 
-
-def transform_length(
-    df: pd.DataFrame, round_func: Callable[[any], int]
-) -> pd.DataFrame:
-    """Transform the Length column by rounding and formatting."""
-    if "Length" in df.columns:
-        df["Length"] = df["Length"].apply(round_func)
-        df["Length"] = pd.to_timedelta(df["Length"], unit="s").apply(
-            lambda x: str(x).split()[-1].zfill(8)
-        )
-    return df
-
-
 def transform_line_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Convert Line and '#' columns to integer."""
     if "Line" in df.columns:
@@ -199,6 +186,15 @@ class FileProcessor:
         except (ValueError, TypeError) as e:
             logging.warning(f"Error rounding seconds '{seconds}': {e}")
             return 0
+        
+    def transform_length(self,
+    df: pd.DataFrame, round_func: Callable[[any], int]
+) -> pd.DataFrame:
+        """Transform the Length column by rounding and formatting."""
+        if "Length" in df.columns:
+            df["Length"] = df["Length"].apply(round_func)
+            df["Length"] = df["Length"].apply(self.round_to_nearest_increment).astype(int)        
+        return df
 
     def safe_to_numeric(self, value):
         """
@@ -319,7 +315,7 @@ class FileProcessor:
             df = transform_gross_rate(df, self.safe_to_numeric)
 
             # Transform Length
-            df = transform_length(df, self.round_to_nearest_increment)
+            df = self.transform_length(df, self.round_to_nearest_increment)
 
             # Transform Line and '#' columns
             df = transform_line_columns(df)
