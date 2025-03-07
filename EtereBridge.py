@@ -227,10 +227,6 @@ class EtereBridge:
             logging.error(f"Error applying user inputs: {str(e)}")
             raise
 
-        except Exception as e:
-            logging.error(f"Error applying user inputs: {str(e)}")
-            raise
-
     def save_to_excel(
         self, df: pd.DataFrame, output_path: str, agency_fee: Optional[float] = 0.15
     ):
@@ -459,8 +455,6 @@ class EtereBridge:
             primary_language = verify_languages(df, (detected_counts, row_languages))
             if isinstance(primary_language, pd.Series):
                 primary_language = primary_language.to_dict()
-            user_inputs["language"] = primary_language
-
             user_inputs["language"] = primary_language
 
             logging.info("Applying user inputs...")
