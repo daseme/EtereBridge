@@ -105,16 +105,6 @@ class EtereBridge:
             logging.error(f"Error reading header: {e}")
             return "", ""
 
-    def generate_billcode(self, text_box_180: str, text_box_171: str) -> str:
-        """Combine Textbox180 and Textbox171 for billcode."""
-        if text_box_180 and text_box_171:
-            return f"{text_box_180}:{text_box_171}"
-        elif text_box_171:
-            return text_box_171
-        elif text_box_180:
-            return text_box_180
-        return ""
-
     def apply_user_inputs(
         self,
         df: pd.DataFrame,
