@@ -186,24 +186,9 @@ class EtereBridge:
 
             # Handle agency fees
             if agency_flag == "Agency" and agency_fee is not None:
-                try:
-                    gross_rates = (
-                        df["Gross Rate"]
-                        .str.replace("$", "")
-                        .str.replace(",", "")
-                        .astype(float)
-                    )
-                    df["Broker Fees"] = gross_rates * agency_fee
-                    df["Broker Fees"] = df["Broker Fees"].map("${:,.2f}".format)
-                    logging.info(
-                        f"Successfully calculated broker fees using {agency_fee:.1%} rate"
-                    )
-                except Exception as e:
-                    logging.error(f"Error calculating broker fees: {str(e)}")
-                    df["Broker Fees"] = None
+                df["Broker Fees"] = None
             else:
                 df["Broker Fees"] = None
-                logging.info("No broker fees applied (non-agency or no fee specified)")
 
             # Ensure all required columns exist
             logging.info("Ensuring all required columns exist...")
@@ -231,46 +216,48 @@ class EtereBridge:
             raise
 
     def save_to_excel(
-        self, df: pd.DataFrame, output_path: str, agency_fee: Optional[float] = 0.15
+        self,
+        df: pd.DataFrame,
+        output_path: str,
+        agency_fee: Optional[float] = 0.15
     ):
         """
         Write the final DataFrame 'df' to an Excel file, preserving formulas,
         template formatting, and special handling for time/date columns.
 
-        This method:
         1. Loads a workbook template (Excel file).
         2. Copies formulas/formatting from the template row 2.
         3. Writes DataFrame headers into row 1.
         4. Inserts data from row 2 onward.
         5. Applies date/time formatting for Air Date, End Date, Time In, Time Out, and Length.
-            - 'Length' is stored as a numeric time fraction (seconds / 86400), then displayed as [h]:mm:ss.
-            - The cell is also centered horizontally.
-        6. Removes extra template rows at the bottom.
-        7. Saves the workbook to 'output_path'.
+        - 'Length' is stored as a numeric time fraction (seconds / 86400), then displayed as [h]:mm:ss.
+        - The cell is also centered horizontally.
+        6. Injects a Broker Fees in-cell formula (NEW) if “Agency?” == “Agency.”
+        7. Removes extra template rows at the bottom.
+        8. Saves the workbook to 'output_path'.
 
         Args:
             df (pd.DataFrame): The final, transformed data to be written to Excel.
             output_path (str): The path where the completed Excel file is saved.
-            agency_fee (float, optional): An optional agency fee (not used directly here).
+            agency_fee (float, optional): Agency fee used to build broker-fee formulas if Agency? = Agency.
         """
         try:
+            # 1) Load the template workbook
             template_path = self.config.paths.template_path
             logging.info(f"Loading template from: {template_path}")
             workbook = load_workbook(template_path, data_only=False)
             sheet = workbook.active
 
+            # Gather final column order from config
             columns = self.config.final_columns
 
-            # --- 1) Extract formulas and formatting from template row 2. ---
+            # 2) Extract formulas and formatting from template row 2
             template_formulas = {}
             template_formatting = {}
-
             for col in range(1, len(columns) + 1):
                 cell = sheet.cell(row=2, column=col)
-                # If the template cell has a formula, store it
                 if cell.value and str(cell.value).startswith("="):
                     template_formulas[col] = cell.value
-                # Store style and formatting information for later reuse
                 template_formatting[col] = {
                     "style": cell.style,
                     "number_format": cell.number_format,
@@ -280,34 +267,53 @@ class EtereBridge:
                     "alignment": copy(cell.alignment),
                 }
 
-            # --- 2) Write headers in row 1. ---
+            # 3) Write headers in row 1
             for col_num, column_title in enumerate(columns, start=1):
                 sheet.cell(row=1, column=col_num, value=column_title)
 
-            # --- 3) Write data starting at row 2. ---
+            # CHANGES BELOW ---
+            # Identify columns for Broker Fees/Gross Rate
+            gross_col_index = None
+            broker_col_index = None
+            gross_col_letter = None
+            broker_col_letter = None
+            # Also track "Agency?" data directly from df to avoid row-based mismatch
+            agency_flag_idx = None
+            agency_column_data = None
+
+            if "Gross Rate" in columns:
+                gross_col_index = columns.index("Gross Rate") + 1
+                gross_col_letter = get_column_letter(gross_col_index)
+            if "Broker Fees" in columns:
+                broker_col_index = columns.index("Broker Fees") + 1
+                broker_col_letter = get_column_letter(broker_col_index)
+            # NEW: store the agency column data if it exists
+            if "Agency?" in columns:
+                agency_flag_idx = columns.index("Agency?")
+                agency_column_data = df[columns[agency_flag_idx]]
+            # --- END CHANGES ---
+
+            # 4) Write data starting at row 2
             for row_num, row_data in enumerate(df.values, start=2):
                 for col_num, cell_value in enumerate(row_data, start=1):
                     cell = sheet.cell(row=row_num, column=col_num)
                     col_name = columns[col_num - 1]
 
-                    # Handle Time In/Time Out as numeric time
+                    # A) Convert Time In/Time Out to numeric time
                     if col_name in ("Time In", "Time Out"):
                         time_serial = self._parse_time_24h(cell_value)
                         if time_serial is not None:
                             cell.value = time_serial
                             cell.number_format = "[h]:mm:ss"
                         else:
-                            # If parsing fails, store it "as is"
                             cell.value = cell_value
 
-                    # If col_name is End Date, we try to apply either the template's formula or link to Air Date
+                    # B) End Date formula (use template or link to Air Date)
                     elif col_name == "End Date":
                         if col_num in template_formulas:
                             formula = template_formulas[col_num]
-                            # Replace the template row reference (e.g. "2") with the actual current row
                             cell.value = formula.replace("2", str(row_num))
                         else:
-                            # If there's no formula in the template for this column
                             try:
                                 air_date_idx = columns.index("Air Date") + 1
                                 air_date_letter = get_column_letter(air_date_idx)
@@ -318,24 +324,34 @@ class EtereBridge:
                                 )
                                 cell.value = cell_value
 
-                    # If the template has a stored formula for this column, apply it
-                    elif col_num in template_formulas:
+                    # C) Check if there's a template formula for this column
+                    elif (
+                        col_num in template_formulas
+                        and col_name not in ("Time In", "Time Out", "Length", "End Date", "Broker Fees")
+                    ):
                         formula = template_formulas[col_num]
                         cell.value = formula.replace("2", str(row_num))
 
-                    # If col_name is Length, treat it as seconds -> fraction of a 24-hour day
+                    # D) (NEW) Inject Broker Fees formula if Agency? == "Agency"
+                    elif col_name == "Broker Fees" and agency_fee is not None:
+                        if agency_column_data is not None and gross_col_letter:
+                            agency_flag_val = agency_column_data.iloc[row_num - 2]
+                            if agency_flag_val == "Agency":
+                                cell.value = f"={gross_col_letter}{row_num}*{agency_fee}"
+                                cell.number_format = '"$"#,##0.00_);("$"#,##0.00)'
+                            else:
+                                cell.value = None
+
+                    # E) Length conversion to fraction-of-day
                     elif col_name == "Length":
                         try:
-                            # Convert cell_value (seconds) to fraction-of-day for Excel
                             if pd.notna(cell_value):
                                 length_in_seconds = float(cell_value)
-                                time_fraction = length_in_seconds / 86400  # 86,400s = 24h
+                                time_fraction = length_in_seconds / 86400
                             else:
                                 time_fraction = 0
                             cell.value = time_fraction
-                            # Display format as hours:minutes:seconds, e.g. "0:05:30"
                             cell.number_format = "[h]:mm:ss"
-                            # Align center so it looks neat in Excel
                             cell.alignment = Alignment(horizontal="center")
                         except Exception as e:
                             logging.warning(
@@ -344,24 +360,20 @@ class EtereBridge:
                             cell.value = cell_value
 
                     else:
-                        # Normal cell assignment
                         cell.value = cell_value
 
-                    # --- Apply template formatting where relevant ---
+                    # F) Apply template formatting
                     if col_num in template_formatting:
                         fmt = template_formatting[col_num]
                         cell.fill = fmt["fill"]
                         cell.border = fmt["border"]
                         cell.font = fmt["font"]
                         cell.alignment = fmt["alignment"]
-                        # Only re-apply the template's style/number format
-                        # if this column isn't Time In or Time Out or Length
-                        # (since we manually set those above).
-                        if col_name not in ("Time In", "Time Out", "Length", "End Date"):
+                        if col_name not in ("Time In", "Time Out", "Length", "End Date", "Broker Fees"):
                             cell.style = fmt["style"]
                             cell.number_format = fmt["number_format"]
 
-            # --- 4) Format Air Date with 2-digit year (m/d/yy). ---
+            # 5) Format Air Date as m/d/yy if present
             if "Air Date" in columns:
                 air_date_col = columns.index("Air Date") + 1
                 for row_num in range(2, len(df) + 2):
@@ -376,7 +388,7 @@ class EtereBridge:
                                 f"Error formatting Air Date row {row_num}: value '{cell.value}' not parseable"
                             )
 
-            # --- 5) Format End Date with 2-digit year (m/d/yy). ---
+            # 6) Format End Date as m/d/yy if present
             if "End Date" in columns:
                 end_date_col = columns.index("End Date") + 1
                 for row_num in range(2, len(df) + 2):
@@ -391,7 +403,7 @@ class EtereBridge:
                                 f"Error formatting End Date row {row_num}: value '{cell.value}' not parseable"
                             )
 
-            # --- 6) Format Month if present. (e.g. "Jan-24") ---
+            # 7) Format Month if present
             if "Month" in columns:
                 month_col = columns.index("Month") + 1
                 for row_num in range(2, len(df) + 2):
@@ -403,20 +415,19 @@ class EtereBridge:
                     else:
                         cell.value = None
 
-            # --- 7) Set the Priority column to 4 if it exists. ---
+            # 8) Set the Priority column to 4 if it exists
             if "Priority" in columns:
                 priority_col = columns.index("Priority") + 1
                 for row_num in range(2, len(df) + 2):
                     sheet.cell(row=row_num, column=priority_col, value=4)
 
-            # --- 8) Remove extra rows (from the template) beyond the data. ---
+            # 9) Remove extra template rows
             if sheet.max_row > len(df) + 1:
                 sheet.delete_rows(len(df) + 2, sheet.max_row - (len(df) + 1))
 
-            # Ensure output directory exists, then save
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             workbook.save(output_path)
-            logging.info("Excel file saved successfully with formulas and formatting.")
+            logging.info("Excel file saved successfully with in-cell formulas and original template formatting.")
 
         except Exception as e:
             logging.error(f"Error saving to Excel: {str(e)}")
