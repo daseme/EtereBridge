@@ -37,14 +37,16 @@ def prompt_for_revenue_type():
     print("   [D] Direct Response Sales")
     print("   [I] Internal Ad Sales")
     print("   [P] Paid Programming")
+    print("   [T] Trade")
     revenue_types = {
         "B": "Branded Content",
         "D": "Direct Response Sales",
         "I": "Internal Ad Sales",
         "P": "Paid Programming",
+        "T": "Trade",
     }
     while True:
-        revenue_input = input("\nSelect revenue type (B/D/I/P): ").strip().upper()
+        revenue_input = input("\nSelect revenue type (B/D/I/P/T): ").strip().upper()
         if revenue_input in revenue_types:
             return revenue_types[revenue_input]
         print("Enter B, D, I, or P.")
