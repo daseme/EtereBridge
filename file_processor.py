@@ -342,15 +342,17 @@ class FileProcessor:
         # Define additional language patterns with regexes
         # \b means word boundary - matches spaces, punctuation, etc.
         language_patterns = {
-            r'\bviet\b': 'V',         # Matches "viet" as a stand-alone word
-            r'\bvietnamese\b': 'V',   # Matches "vietnamese" as a stand-alone word
-            r'\bchinese\b': 'M',      # Matches "chinese" as a stand-alone word
-            r'\bfilipino\b': 'T',     # Matches "filipino" as a stand-alone word
-            r'\btagalog\b': 'T',      # Matches "tagalog" as a stand-alone word  
-            r'\bhmong\b': 'Hm',       # Matches "hmong" as a stand-alone word
-            r'\bkorean\b': 'K',       # Matches "korean" as a stand-alone word
-            r'\bjapanese\b': 'J',     # Matches "japanese" as a stand-alone word
-            r'\bsouth asian\b': 'SA', # Matches "south asian" as a stand-alone phrase
+            r'\bviet\b': 'V',               # Matches "viet" as a stand-alone word
+            r'\bvietnamese\b': 'V',         # Matches "vietnamese" as a stand-alone word
+            r'\bchinese\b': 'M',            # Matches "chinese" as a stand-alone word
+            r'\bfilipino\b': 'T',           # Matches "filipino" as a stand-alone word
+            r'\btagalog\b': 'T',            # Matches "tagalog" as a stand-alone word
+            r'\btv patrol\b': 'T',          # Filipino program "TV Patrol"   
+            r'\bmagandang buhay\b': 'T',    # Filipino program "Magandang Buhay"   
+            r'\bhmong\b': 'Hm',             # Matches "hmong" as a stand-alone word
+            r'\bkorean\b': 'K',             # Matches "korean" as a stand-alone word
+            r'\bjapanese\b': 'J',           # Matches "japanese" as a stand-alone word
+            r'\bsouth asian\b': 'SA',       # Matches "south asian" as a stand-alone phrase
         }
 
         for idx, description in df["rowdescription"].items():
