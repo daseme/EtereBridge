@@ -328,6 +328,7 @@ class FileProcessor:
     def detect_languages(self, df: pd.DataFrame) -> Tuple[Dict[str, int], pd.Series]:
         """
         Detect languages from the 'rowdescription' column.
+        Uses both keyword matching and pattern recognition for better accuracy.
         """
         languages = {}
         row_languages = pd.Series(index=df.index, dtype=str)
@@ -338,21 +339,49 @@ class FileProcessor:
             languages[self.default_language] = len(df)
             return languages, row_languages
 
+        # Define additional language patterns with regexes
+        # \b means word boundary - matches spaces, punctuation, etc.
+        language_patterns = {
+            r'\bviet\b': 'V',         # Matches "viet" as a stand-alone word
+            r'\bvietnamese\b': 'V',   # Matches "vietnamese" as a stand-alone word
+            r'\bchinese\b': 'M',      # Matches "chinese" as a stand-alone word
+            r'\bfilipino\b': 'T',     # Matches "filipino" as a stand-alone word
+            r'\btagalog\b': 'T',      # Matches "tagalog" as a stand-alone word  
+            r'\bhmong\b': 'Hm',       # Matches "hmong" as a stand-alone word
+            r'\bkorean\b': 'K',       # Matches "korean" as a stand-alone word
+            r'\bjapanese\b': 'J',     # Matches "japanese" as a stand-alone word
+            r'\bsouth asian\b': 'SA', # Matches "south asian" as a stand-alone phrase
+        }
+
         for idx, description in df["rowdescription"].items():
             if not isinstance(description, str):
                 row_languages[idx] = self.default_language
                 continue
 
+            # Default to English unless we find a match
             detected_lang = self.default_language
+            
+            # Convert to lowercase for case-insensitive matching
+            desc_lower = description.lower()
+            
+            # Check keyword dictionary first (existing method)
             sorted_mappings = sorted(
                 [(k, v) for k, v in self.language_mapping.items() if k != "default"],
                 key=lambda x: len(x[0]),
                 reverse=True,
             )
             for keyword, code in sorted_mappings:
-                if keyword.lower() in description.lower():
+                if keyword.lower() in desc_lower:
                     detected_lang = code
                     break
+            
+            # If still English, try pattern matching
+            if detected_lang == self.default_language:
+                import re
+                for pattern, code in language_patterns.items():
+                    if re.search(pattern, desc_lower):
+                        detected_lang = code
+                        break
 
             row_languages[idx] = detected_lang
             languages[detected_lang] = languages.get(detected_lang, 0) + 1

@@ -147,44 +147,127 @@ def collect_user_inputs(config):
 
 def verify_languages(df: pd.DataFrame, language_info):
     """
-    Display detected languages and sample entries; return the language Series.
+    Display all unique descriptions with their detected languages and allow pattern-based corrections.
+    Returns the corrected language Series.
     """
     detected_counts, row_languages = language_info
     print("\n" + "-" * 80)
     print("Language Detection Results".center(80))
     print("-" * 80)
+    
+    # Show summary counts
     for lang_code, count in detected_counts.items():
         print(f"   • {lang_code}: {count} entries")
-    print("\nSample entries:")
-    for lang_code in detected_counts:
-        rows = df[row_languages == lang_code]
-        if not rows.empty:
-            print(f"\n{lang_code}:")
-            samples = rows["rowdescription"].head(2)
-            for desc in samples:
-                print(f"   • {desc}")
+    
+    # Group by unique descriptions and show their detected languages
+    unique_descriptions = {}
+    for idx, desc in df["rowdescription"].items():
+        if desc not in unique_descriptions:
+            unique_descriptions[desc] = {
+                "language": row_languages.loc[idx],
+                "count": 0,
+                "indices": []
+            }
+        unique_descriptions[desc]["count"] += 1
+        unique_descriptions[desc]["indices"].append(idx)
+    
+    print(f"\nFound {len(unique_descriptions)} unique line descriptions:")
+    print("-" * 80)
+    
+    # Display all unique descriptions with their detected language
+    for i, (desc, info) in enumerate(unique_descriptions.items(), 1):
+        print(f"{i:2d}. [{info['language']}] {desc} ({info['count']} occurrences)")
+    
     print("\nDoes this look correct? (Y/N)")
     if input().strip().lower() == "n":
         print("\nAvailable language codes: E, M, T, Hm, SA, V, C, K, J")
-        while True:
-            try:
-                row_num = int(
-                    input(
-                        "\nEnter row number to change language, or press Enter to continue: "
-                    ).strip()
-                    or -1
-                )
-                if row_num == -1:
+        print("\nYou can correct languages in several ways:")
+        print("1. Fix specific line descriptions")
+        print("2. Pattern-based correction")
+        
+        choice = input("\nSelect correction method (1/2): ").strip()
+        
+        if choice == "1":
+            # Correct by specific line description
+            while True:
+                try:
+                    line_num = input("\nEnter line number to change language (or press Enter to finish): ").strip()
+                    if not line_num:
+                        break
+                    
+                    line_num = int(line_num)
+                    if 1 <= line_num <= len(unique_descriptions):
+                        # Get the description and current language
+                        desc = list(unique_descriptions.keys())[line_num - 1]
+                        current_lang = unique_descriptions[desc]["language"]
+                        print(f"Current: [{current_lang}] {desc}")
+                        
+                        # Get new language
+                        new_lang = input("Enter new language code: ").strip().upper()
+                        if new_lang in ["E", "M", "T", "Hm", "SA", "V", "C", "K", "J"]:
+                            # Update all matching rows
+                            indices = unique_descriptions[desc]["indices"]
+                            for idx in indices:
+                                row_languages.loc[idx] = new_lang
+                            
+                            # Update our tracking dictionary
+                            unique_descriptions[desc]["language"] = new_lang
+                            count = unique_descriptions[desc]["count"]
+                            print(f"Updated {count} occurrences of '{desc}' to {new_lang}")
+                        else:
+                            print("Invalid language code")
+                    else:
+                        print(f"Please enter a number between 1 and {len(unique_descriptions)}")
+                except ValueError:
+                    print("Invalid input. Please enter a number.")
+        
+        elif choice == "2":
+            # Pattern-based correction
+            while True:
+                pattern = input("\nEnter text pattern to match (or press Enter to finish): ").strip()
+                if not pattern:
                     break
-                if 0 <= row_num < len(df):
-                    print(f"Current: {df.iloc[row_num]['rowdescription']}")
-                    new_lang = input("Enter new language code: ").strip().upper()
-                    if new_lang in ["E", "M", "T", "Hm", "SA", "V", "C", "K", "J"]:
-                        row_languages.iloc[row_num] = new_lang
+                
+                # Find matching descriptions
+                matches = [desc for desc in unique_descriptions.keys() 
+                          if pattern.lower() in desc.lower()]
+                
+                if not matches:
+                    print(f"No descriptions contain '{pattern}'")
+                    continue
+                
+                # Show matching descriptions
+                print(f"\nFound {len(matches)} matching descriptions:")
+                for i, desc in enumerate(matches, 1):
+                    lang = unique_descriptions[desc]["language"]
+                    count = unique_descriptions[desc]["count"]
+                    print(f"{i:2d}. [{lang}] {desc} ({count} occurrences)")
+                
+                # Get target language
+                new_lang = input("\nSet these to which language code? ").strip().upper()
+                if new_lang in ["E", "M", "T", "Hm", "SA", "V", "C", "K", "J"]:
+                    # Apply changes to all matching descriptions
+                    total_updated = 0
+                    for desc in matches:
+                        indices = unique_descriptions[desc]["indices"]
+                        for idx in indices:
+                            row_languages.loc[idx] = new_lang
+                        
+                        # Update tracking dictionary
+                        count = unique_descriptions[desc]["count"]
+                        unique_descriptions[desc]["language"] = new_lang
+                        total_updated += count
+                    
+                    print(f"Updated {total_updated} total occurrences across {len(matches)} descriptions")
                 else:
-                    print("Row number out of range.")
-            except ValueError:
-                print("Invalid input.")
+                    print("Invalid language code, skipping this pattern")
+    
+    # Show summary of changes
+    print("\nUpdated language distribution:")
+    updated_counts = row_languages.value_counts().to_dict()
+    for lang_code, count in sorted(updated_counts.items()):
+        print(f"   • {lang_code}: {count} entries")
+    
     return row_languages
 
 
