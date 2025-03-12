@@ -1,7 +1,7 @@
 import os
 import sys
 import configparser
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List
 from config_setup import setup_logging
 
@@ -26,6 +26,7 @@ class AppConfig:
     sales_people: List[str]
     language_options: List[str]
     type_options: List[str]
+    program_language_map: Dict[str, str] = field(default_factory=dict)  # Add this new field
 
 
 class ConfigurationError(Exception):
@@ -152,6 +153,10 @@ class ConfigManager:
         language_options = [
             opt.strip() for opt in self.config["Languages"]["options"].split(",")
         ]
+        # Load program to language mappings
+        program_language_map = {}
+        if "ProgramLanguageMapping" in self.config:
+            program_language_map = dict(self.config["ProgramLanguageMapping"])
 
         # Load type options
         type_options = [
@@ -165,6 +170,7 @@ class ConfigManager:
             sales_people=sales_people,
             language_options=language_options,
             type_options=type_options,
+            program_language_map=program_language_map,
         )
 
     def get_config(self) -> AppConfig:

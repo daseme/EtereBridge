@@ -1,4 +1,5 @@
 import pandas as pd
+import re
 from datetime import datetime
 from typing import Dict, Tuple, Optional, Callable
 import logging
@@ -327,8 +328,7 @@ class FileProcessor:
 
     def detect_languages(self, df: pd.DataFrame) -> Tuple[Dict[str, int], pd.Series]:
         """
-        Detect languages from the 'rowdescription' column.
-        Uses both keyword matching and pattern recognition for better accuracy.
+        Detect languages from the 'rowdescription' column with a scalable approach.
         """
         languages = {}
         row_languages = pd.Series(index=df.index, dtype=str)
@@ -338,22 +338,27 @@ class FileProcessor:
             row_languages[:] = self.default_language
             languages[self.default_language] = len(df)
             return languages, row_languages
-
-        # Define additional language patterns with regexes
-        # \b means word boundary - matches spaces, punctuation, etc.
-        language_patterns = {
-            r'\bviet\b': 'V',               # Matches "viet" as a stand-alone word
-            r'\bvietnamese\b': 'V',         # Matches "vietnamese" as a stand-alone word
-            r'\bchinese\b': 'M',            # Matches "chinese" as a stand-alone word
-            r'\bfilipino\b': 'T',           # Matches "filipino" as a stand-alone word
-            r'\btagalog\b': 'T',            # Matches "tagalog" as a stand-alone word
-            r'\btv patrol\b': 'T',          # Filipino program "TV Patrol"   
-            r'\bmagandang buhay\b': 'T',    # Filipino program "Magandang Buhay"   
-            r'\bhmong\b': 'Hm',             # Matches "hmong" as a stand-alone word
-            r'\bkorean\b': 'K',             # Matches "korean" as a stand-alone word
-            r'\bjapanese\b': 'J',           # Matches "japanese" as a stand-alone word
-            r'\bsouth asian\b': 'SA',       # Matches "south asian" as a stand-alone phrase
-        }
+        
+        # Get program mappings from config
+        program_language_map = self.config.program_language_map or {}
+        
+        # Compile general language patterns
+        compiled_patterns = {}
+        for term, lang_code in {
+            r'\bviet\b': 'V', 
+            r'\bvietnamese\b': 'V',
+            r'\bchinese\b': 'M',
+            r'\bmandarin\b': 'M',
+            r'\bfilipino\b': 'T',
+            r'\btagalog\b': 'T',
+            r'\bhmong\b': 'Hm',
+            r'\bkorean\b': 'K',
+            r'\bjapanese\b': 'J',
+            r'\bsouth asian\b': 'SA',
+            r'\bgujarati\b': 'SA',
+            r'\bpunjabi\b': 'SA',
+        }.items():
+            compiled_patterns[re.compile(term, re.IGNORECASE)] = lang_code
 
         for idx, description in df["rowdescription"].items():
             if not isinstance(description, str):
@@ -363,25 +368,23 @@ class FileProcessor:
             # Default to English unless we find a match
             detected_lang = self.default_language
             
-            # Convert to lowercase for case-insensitive matching
-            desc_lower = description.lower()
-            
-            # Check keyword dictionary first (existing method)
-            sorted_mappings = sorted(
-                [(k, v) for k, v in self.language_mapping.items() if k != "default"],
-                key=lambda x: len(x[0]),
-                reverse=True,
-            )
-            for keyword, code in sorted_mappings:
-                if keyword.lower() in desc_lower:
-                    detected_lang = code
+            # 1. Check for specific program names (from config)
+            for program, lang_code in program_language_map.items():
+                if program.lower() in description.lower():
+                    detected_lang = lang_code
                     break
-            
-            # If still English, try pattern matching
+                    
+            # 2. If not found, check for language keywords from original mapping
             if detected_lang == self.default_language:
-                import re
-                for pattern, code in language_patterns.items():
-                    if re.search(pattern, desc_lower):
+                for keyword, code in self.language_mapping.items():
+                    if keyword.lower() in description.lower():
+                        detected_lang = code
+                        break
+                        
+            # 3. If still not found, check pattern matches
+            if detected_lang == self.default_language:
+                for pattern, code in compiled_patterns.items():
+                    if pattern.search(description):
                         detected_lang = code
                         break
 
