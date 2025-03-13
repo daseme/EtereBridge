@@ -218,17 +218,6 @@ class EtereBridge:
         Write the final DataFrame 'df' to an Excel file, preserving formulas,
         template formatting, and special handling for time/date columns.
 
-        1. Loads a workbook template (Excel file).
-        2. Copies formulas/formatting from the template row 2.
-        3. Writes DataFrame headers into row 1.
-        4. Inserts data from row 2 onward.
-        5. Applies date/time formatting for Air Date, End Date, Time In, Time Out, and Length.
-        - 'Length' is stored as a numeric time fraction (seconds / 86400), then displayed as [h]:mm:ss.
-        - The cell is also centered horizontally.
-        6. Injects a Broker Fees in-cell formula (NEW) if "Agency?" == "Agency."
-        7. Removes extra template rows at the bottom.
-        8. Saves the workbook to 'output_path'.
-
         Args:
             df (pd.DataFrame): The final, transformed data to be written to Excel.
             output_path (str): The path where the completed Excel file is saved.
@@ -264,33 +253,48 @@ class EtereBridge:
             for col_num, column_title in enumerate(columns, start=1):
                 sheet.cell(row=1, column=col_num, value=column_title)
 
-            # CHANGES BELOW ---
-            # Identify columns for Broker Fees/Gross Rate
+            # Identify columns for special formatting
             gross_col_index = None
+            spot_value_col_index = None
+            station_net_col_index = None
             broker_col_index = None
             gross_col_letter = None
             broker_col_letter = None
-            # Also track "Agency?" data directly from df to avoid row-based mismatch
-            agency_flag_idx = None
-            agency_column_data = None
-            # Track Air Date column index for End Date formula
             air_date_idx = None
             air_date_letter = None
+            agency_flag_idx = None
+            agency_column_data = None
 
+            # Define all monetary columns that need consistent currency formatting
+            monetary_columns = ["Gross Rate", "Spot Value", "Station Net"]
+            monetary_column_indices = {}
+            
+            # Find column indices
             if "Gross Rate" in columns:
                 gross_col_index = columns.index("Gross Rate") + 1
                 gross_col_letter = get_column_letter(gross_col_index)
+                monetary_column_indices["Gross Rate"] = gross_col_index
+            if "Spot Value" in columns:
+                spot_value_col_index = columns.index("Spot Value") + 1
+                monetary_column_indices["Spot Value"] = spot_value_col_index
+            if "Station Net" in columns:
+                station_net_col_index = columns.index("Station Net") + 1
+                monetary_column_indices["Station Net"] = station_net_col_index
             if "Broker Fees" in columns:
                 broker_col_index = columns.index("Broker Fees") + 1
                 broker_col_letter = get_column_letter(broker_col_index)
+                # Add Broker Fees to monetary columns
+                monetary_columns.append("Broker Fees")
+                monetary_column_indices["Broker Fees"] = broker_col_index
             if "Air Date" in columns:
                 air_date_idx = columns.index("Air Date") + 1
                 air_date_letter = get_column_letter(air_date_idx)
-            # NEW: store the agency column data if it exists
             if "Agency?" in columns:
                 agency_flag_idx = columns.index("Agency?")
                 agency_column_data = df[columns[agency_flag_idx]]
-            # --- END CHANGES ---
+
+            # Currency format string - define once to ensure consistency
+            currency_format = '"$"#,##0.00_);("$"#,##0.00)'
 
             # 4) Write data starting at row 2
             for row_num, row_data in enumerate(df.values, start=2):
@@ -338,13 +342,13 @@ class EtereBridge:
                         formula = template_formulas[col_num]
                         cell.value = formula.replace("2", str(row_num))
 
-                    # D) (NEW) Inject Broker Fees formula if Agency? == "Agency"
+                    # D) Inject Broker Fees formula if Agency? == "Agency"
                     elif col_name == "Broker Fees" and agency_fee is not None:
                         if agency_column_data is not None and gross_col_letter:
                             agency_flag_val = agency_column_data.iloc[row_num - 2]
                             if agency_flag_val == "Agency":
                                 cell.value = f"={gross_col_letter}{row_num}*{agency_fee}"
-                                cell.number_format = '"$"#,##0.00_);("$"#,##0.00)'
+                                cell.number_format = currency_format
                             else:
                                 cell.value = None
 
@@ -365,21 +369,29 @@ class EtereBridge:
                             )
                             cell.value = cell_value
                             
-                    # F) Format Gross Rate as currency
-                    elif col_name == "Gross Rate":
-                        # Direct numeric value, using openpyxl's formatting
-                        cell.value = cell_value if pd.notna(cell_value) else 0
-                        # If the value is already formatted as a string with $ signs
-                        if isinstance(cell_value, str) and '$' in cell_value:
+                    # F) Format all monetary columns (Gross Rate, Spot Value, Station Net) as currency
+                    elif col_name in monetary_columns:
+                        # Convert any blank or dash to zero
+                        if pd.isna(cell_value) or cell_value == '-' or cell_value == '':
+                            cell.value = 0
+                        # Handle string values with currency symbols
+                        elif isinstance(cell_value, str):
                             try:
-                                # Extract numeric value from formatted string
-                                numeric_value = float(cell_value.replace('$', '').replace(',', ''))
+                                # Extract numeric value, handling both "$0.00" and "-" formats
+                                if '$' in cell_value:
+                                    numeric_value = float(cell_value.replace('$', '').replace(',', ''))
+                                else:
+                                    numeric_value = 0 if cell_value.strip() == '-' else float(cell_value.replace(',', ''))
                                 cell.value = numeric_value
                             except (ValueError, TypeError):
-                                # If conversion fails, keep as is
-                                pass
-                        # Apply currency formatting
-                        cell.number_format = '"$"#,##0.00_);("$"#,##0.00)'
+                                # If conversion fails, set to zero
+                                cell.value = 0
+                        else:
+                            # It's already a number
+                            cell.value = float(cell_value) if pd.notna(cell_value) else 0
+                        
+                        # Apply currency formatting consistently
+                        cell.number_format = currency_format
                     else:
                         cell.value = cell_value
 
@@ -390,9 +402,18 @@ class EtereBridge:
                         cell.border = fmt["border"]
                         cell.font = fmt["font"]
                         cell.alignment = fmt["alignment"]
-                        if col_name not in ("Time In", "Time Out", "Length", "End Date", "Broker Fees", "Gross Rate"):
+                        if col_name not in ("Time In", "Time Out", "Length", "End Date") + tuple(monetary_columns):
                             cell.style = fmt["style"]
                             cell.number_format = fmt["number_format"]
+
+            # Make a second pass to ensure currency formatting is applied to all monetary columns
+            # This is a safety measure in case something overrode our formatting
+            for col_name, col_idx in monetary_column_indices.items():
+                for row_num in range(2, len(df) + 2):
+                    cell = sheet.cell(row=row_num, column=col_idx)
+                    if cell.value is None or cell.value == '':
+                        cell.value = 0
+                    cell.number_format = currency_format
 
             # 5) Format Air Date as m/d/yy if present
             if "Air Date" in columns:
@@ -409,10 +430,7 @@ class EtereBridge:
                                 f"Error formatting Air Date row {row_num}: value '{cell.value}' not parseable"
                             )
 
-            # 6) The End Date section is now redundant as we handle it in the row loop above
-            # This is intentional to ensure every End Date cell is properly formatted
-
-            # 7) Format Month if present
+            # 6) Format Month if present
             if "Month" in columns:
                 month_col = columns.index("Month") + 1
                 for row_num in range(2, len(df) + 2):
@@ -424,13 +442,13 @@ class EtereBridge:
                     else:
                         cell.value = None
 
-            # 8) Set the Priority column to 4 if it exists
+            # 7) Set the Priority column to 4 if it exists
             if "Priority" in columns:
                 priority_col = columns.index("Priority") + 1
                 for row_num in range(2, len(df) + 2):
                     sheet.cell(row=row_num, column=priority_col, value=4)
 
-            # 9) Remove extra template rows
+            # 8) Remove extra template rows
             if sheet.max_row > len(df) + 1:
                 sheet.delete_rows(len(df) + 2, sheet.max_row - (len(df) + 1))
 
