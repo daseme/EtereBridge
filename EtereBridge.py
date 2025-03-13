@@ -16,6 +16,8 @@ from tqdm import tqdm
 from utils import safe_convert_date
 from config_manager import config_manager
 from file_processor import FileProcessor, transform_month_column
+from monetary_utils import standardize_monetary_columns, format_excel_monetary_columns
+from time_utils import transform_times, excel_time_to_seconds, seconds_to_excel_time
 from user_interface import (
     collect_user_inputs,
     verify_languages,
@@ -209,7 +211,10 @@ class EtereBridge:
             raise
 
     def save_to_excel(
-        self, df: pd.DataFrame, output_path: str, agency_fee: Optional[float] = 0.15
+        self,
+        df: pd.DataFrame,
+        output_path: str,
+        agency_fee: Optional[float] = 0.15
     ):
         """
         Write the final DataFrame 'df' to an Excel file, preserving formulas,
@@ -263,35 +268,25 @@ class EtereBridge:
             agency_column_data = None
 
             # Define all monetary columns that need consistent currency formatting
-            monetary_columns = ["Gross Rate", "Spot Value", "Station Net"]
-            monetary_column_indices = {}
-
+            monetary_columns = ["Gross Rate", "Spot Value", "Station Net", "Broker Fees"]
+            
             # Find column indices
             if "Gross Rate" in columns:
                 gross_col_index = columns.index("Gross Rate") + 1
                 gross_col_letter = get_column_letter(gross_col_index)
-                monetary_column_indices["Gross Rate"] = gross_col_index
             if "Spot Value" in columns:
                 spot_value_col_index = columns.index("Spot Value") + 1
-                monetary_column_indices["Spot Value"] = spot_value_col_index
             if "Station Net" in columns:
                 station_net_col_index = columns.index("Station Net") + 1
-                monetary_column_indices["Station Net"] = station_net_col_index
             if "Broker Fees" in columns:
                 broker_col_index = columns.index("Broker Fees") + 1
                 broker_col_letter = get_column_letter(broker_col_index)
-                # Add Broker Fees to monetary columns
-                monetary_columns.append("Broker Fees")
-                monetary_column_indices["Broker Fees"] = broker_col_index
             if "Air Date" in columns:
                 air_date_idx = columns.index("Air Date") + 1
                 air_date_letter = get_column_letter(air_date_idx)
             if "Agency?" in columns:
                 agency_flag_idx = columns.index("Agency?")
                 agency_column_data = df[columns[agency_flag_idx]]
-
-            # Currency format string - define once to ensure consistency
-            currency_format = '"$"#,##0.00_);("$"#,##0.00)'
 
             # 4) Write data starting at row 2
             for row_num, row_data in enumerate(df.values, start=2):
@@ -316,7 +311,7 @@ class EtereBridge:
                             cell.value = f"={air_date_letter}{row_num}"
                             cell.number_format = "m/d/yy"
                         else:
-                            # If we can't link to Air Date, use the value directly
+                            # If we can't link to Air Date, use the value directly 
                             # but still format it as a date
                             try:
                                 dt = safe_convert_date(cell_value)
@@ -332,12 +327,9 @@ class EtereBridge:
                                 cell.value = cell_value
 
                     # C) Check if there's a template formula for this column
-                    elif col_num in template_formulas and col_name not in (
-                        "Time In",
-                        "Time Out",
-                        "Length",
-                        "End Date",
-                        "Broker Fees",
+                    elif (
+                        col_num in template_formulas
+                        and col_name not in ("Time In", "Time Out", "Length", "End Date", "Broker Fees")
                     ):
                         formula = template_formulas[col_num]
                         cell.value = formula.replace("2", str(row_num))
@@ -347,10 +339,7 @@ class EtereBridge:
                         if agency_column_data is not None and gross_col_letter:
                             agency_flag_val = agency_column_data.iloc[row_num - 2]
                             if agency_flag_val == "Agency":
-                                cell.value = (
-                                    f"={gross_col_letter}{row_num}*{agency_fee}"
-                                )
-                                cell.number_format = currency_format
+                                cell.value = f"={gross_col_letter}{row_num}*{agency_fee}"
                             else:
                                 cell.value = None
 
@@ -370,38 +359,13 @@ class EtereBridge:
                                 f"Error converting Length at row {row_num}: {e}. Storing raw value."
                             )
                             cell.value = cell_value
-
-                    # F) Format all monetary columns (Gross Rate, Spot Value, Station Net) as currency
+                    
+                    # F) For monetary columns, just set the value as is
+                    # (formatting will be handled by format_excel_monetary_columns later)
                     elif col_name in monetary_columns:
-                        # Convert any blank or dash to zero
-                        if pd.isna(cell_value) or cell_value == "-" or cell_value == "":
-                            cell.value = 0
-                        # Handle string values with currency symbols
-                        elif isinstance(cell_value, str):
-                            try:
-                                # Extract numeric value, handling both "$0.00" and "-" formats
-                                if "$" in cell_value:
-                                    numeric_value = float(
-                                        cell_value.replace("$", "").replace(",", "")
-                                    )
-                                else:
-                                    numeric_value = (
-                                        0
-                                        if cell_value.strip() == "-"
-                                        else float(cell_value.replace(",", ""))
-                                    )
-                                cell.value = numeric_value
-                            except (ValueError, TypeError):
-                                # If conversion fails, set to zero
-                                cell.value = 0
-                        else:
-                            # It's already a number
-                            cell.value = (
-                                float(cell_value) if pd.notna(cell_value) else 0
-                            )
-
-                        # Apply currency formatting consistently
-                        cell.number_format = currency_format
+                        # We assume the df already has clean numeric values from standardize_monetary_columns
+                        cell.value = cell_value if pd.notna(cell_value) else 0
+                    
                     else:
                         cell.value = cell_value
 
@@ -412,23 +376,12 @@ class EtereBridge:
                         cell.border = fmt["border"]
                         cell.font = fmt["font"]
                         cell.alignment = fmt["alignment"]
-                        if col_name not in (
-                            "Time In",
-                            "Time Out",
-                            "Length",
-                            "End Date",
-                        ) + tuple(monetary_columns):
+                        if col_name not in ("Time In", "Time Out", "Length", "End Date") + tuple(monetary_columns):
                             cell.style = fmt["style"]
                             cell.number_format = fmt["number_format"]
 
-            # Make a second pass to ensure currency formatting is applied to all monetary columns
-            # This is a safety measure in case something overrode our formatting
-            for col_name, col_idx in monetary_column_indices.items():
-                for row_num in range(2, len(df) + 2):
-                    cell = sheet.cell(row=row_num, column=col_idx)
-                    if cell.value is None or cell.value == "":
-                        cell.value = 0
-                    cell.number_format = currency_format
+            # Apply currency formatting to all monetary columns
+            format_excel_monetary_columns(sheet, df, monetary_columns)
 
             # 5) Format Air Date as m/d/yy if present
             if "Air Date" in columns:
@@ -469,9 +422,7 @@ class EtereBridge:
 
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             workbook.save(output_path)
-            logging.info(
-                "Excel file saved successfully with in-cell formulas and original template formatting."
-            )
+            logging.info("Excel file saved successfully with in-cell formulas and original template formatting.")
 
         except Exception as e:
             logging.error(f"Error saving to Excel: {str(e)}")
@@ -565,6 +516,14 @@ class EtereBridge:
             df = self.file_processor.apply_transformations(
                 df, text_box_180, text_box_171
             )
+
+            # Add standardization of monetary columns
+            logging.info("Standardizing monetary columns...")
+            df = standardize_monetary_columns(df)
+        
+            # Transform time columns
+            logging.info("Standardizing time formats...")
+            df = transform_times(df)
 
             if user_inputs is None:
                 logging.info("Collecting user inputs...")
