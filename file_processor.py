@@ -82,21 +82,27 @@ def apply_market_replacements(
     return df
 
 
-def transform_gross_rate(
-    df: pd.DataFrame, safe_to_numeric_func: Callable[[any], float]
-) -> pd.DataFrame:
-    """Clean and format the Gross Rate column."""
+def transform_gross_rate(df: pd.DataFrame, safe_to_numeric_func: Callable[[any], float]) -> pd.DataFrame:
+    """
+    Clean and format the Gross Rate column by properly converting to numeric values.
+    
+    Args:
+        df (pd.DataFrame): DataFrame with Gross Rate column to transform
+        safe_to_numeric_func (Callable): Function to safely convert values to numeric type
+        
+    Returns:
+        pd.DataFrame: DataFrame with transformed Gross Rate column
+    """
     if "Gross Rate" in df.columns:
-        df["Gross Rate"] = (
-            df["Gross Rate"]
-            .fillna(0)
-            .astype(str)
-            .str.strip()
-            .str.replace("$", "")
-            .str.replace(",", "")
-        )
-        df["Gross Rate"] = df["Gross Rate"].apply(safe_to_numeric_func).fillna(0)
-        df["Gross Rate"] = df["Gross Rate"].map("${:,.2f}".format)
+        # Convert string dollar values to actual numeric values
+        df["Gross Rate"] = df["Gross Rate"].fillna(0)
+        # Handle both string and numeric input by converting to string first
+        df["Gross Rate"] = df["Gross Rate"].astype(str)
+        # Remove currency symbols and thousands separators
+        df["Gross Rate"] = df["Gross Rate"].str.replace('$', '', regex=False)
+        df["Gross Rate"] = df["Gross Rate"].str.replace(',', '', regex=False)
+        # Convert to numeric values for calculations (not strings)
+        df["Gross Rate"] = pd.to_numeric(df["Gross Rate"], errors='coerce').fillna(0)
     return df
 
 def transform_line_columns(df: pd.DataFrame) -> pd.DataFrame:

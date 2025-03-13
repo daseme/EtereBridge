@@ -147,10 +147,13 @@ class EtereBridge:
             # Compute Type automatically from Gross Rate on a per-row basis.
             def compute_type(row):
                 try:
-                    # Get the Gross Rate value (assumed formatted like "$0.00")
-                    value = row.get("Gross Rate", "$0")
-                    num = float(value.replace("$", "").replace(",", ""))
-                    if num == 0:
+                    # Use the numeric value directly (no string conversion/parsing needed)
+                    value = row.get("Gross Rate", 0)
+                    # Ensure it's treated as a number even if it came from elsewhere
+                    if not isinstance(value, (int, float)):
+                        value = float(str(value).replace("$", "").replace(",", ""))
+                    
+                    if value == 0:
                         return "BNS"
                     else:
                         return "COM"
@@ -222,7 +225,7 @@ class EtereBridge:
         5. Applies date/time formatting for Air Date, End Date, Time In, Time Out, and Length.
         - 'Length' is stored as a numeric time fraction (seconds / 86400), then displayed as [h]:mm:ss.
         - The cell is also centered horizontally.
-        6. Injects a Broker Fees in-cell formula (NEW) if “Agency?” == “Agency.”
+        6. Injects a Broker Fees in-cell formula (NEW) if "Agency?" == "Agency."
         7. Removes extra template rows at the bottom.
         8. Saves the workbook to 'output_path'.
 
@@ -270,6 +273,9 @@ class EtereBridge:
             # Also track "Agency?" data directly from df to avoid row-based mismatch
             agency_flag_idx = None
             agency_column_data = None
+            # Track Air Date column index for End Date formula
+            air_date_idx = None
+            air_date_letter = None
 
             if "Gross Rate" in columns:
                 gross_col_index = columns.index("Gross Rate") + 1
@@ -277,6 +283,9 @@ class EtereBridge:
             if "Broker Fees" in columns:
                 broker_col_index = columns.index("Broker Fees") + 1
                 broker_col_letter = get_column_letter(broker_col_index)
+            if "Air Date" in columns:
+                air_date_idx = columns.index("Air Date") + 1
+                air_date_letter = get_column_letter(air_date_idx)
             # NEW: store the agency column data if it exists
             if "Agency?" in columns:
                 agency_flag_idx = columns.index("Agency?")
@@ -298,19 +307,26 @@ class EtereBridge:
                         else:
                             cell.value = cell_value
 
-                    # B) End Date formula (use template or link to Air Date)
+                    # B) End Date handling - always use the same date as Air Date
+                    # and always apply the date formatting
                     elif col_name == "End Date":
-                        if col_num in template_formulas:
-                            formula = template_formulas[col_num]
-                            cell.value = formula.replace("2", str(row_num))
+                        if air_date_letter:
+                            # Link to Air Date value and apply date formatting
+                            cell.value = f"={air_date_letter}{row_num}"
+                            cell.number_format = "m/d/yy"
                         else:
+                            # If we can't link to Air Date, use the value directly 
+                            # but still format it as a date
                             try:
-                                air_date_idx = columns.index("Air Date") + 1
-                                air_date_letter = get_column_letter(air_date_idx)
-                                cell.value = f"={air_date_letter}{row_num}"
+                                dt = safe_convert_date(cell_value)
+                                if dt is not None:
+                                    cell.value = dt
+                                    cell.number_format = "m/d/yy"
+                                else:
+                                    cell.value = cell_value
                             except Exception as e:
                                 logging.warning(
-                                    f"Error setting End Date formula at row {row_num}: {e}"
+                                    f"Error setting End Date at row {row_num}: {e}"
                                 )
                                 cell.value = cell_value
 
@@ -348,18 +364,33 @@ class EtereBridge:
                                 f"Error converting Length at row {row_num}: {e}. Storing raw value."
                             )
                             cell.value = cell_value
-
+                            
+                    # F) Format Gross Rate as currency
+                    elif col_name == "Gross Rate":
+                        # Direct numeric value, using openpyxl's formatting
+                        cell.value = cell_value if pd.notna(cell_value) else 0
+                        # If the value is already formatted as a string with $ signs
+                        if isinstance(cell_value, str) and '$' in cell_value:
+                            try:
+                                # Extract numeric value from formatted string
+                                numeric_value = float(cell_value.replace('$', '').replace(',', ''))
+                                cell.value = numeric_value
+                            except (ValueError, TypeError):
+                                # If conversion fails, keep as is
+                                pass
+                        # Apply currency formatting
+                        cell.number_format = '"$"#,##0.00_);("$"#,##0.00)'
                     else:
                         cell.value = cell_value
 
-                    # F) Apply template formatting
+                    # G) Apply template formatting
                     if col_num in template_formatting:
                         fmt = template_formatting[col_num]
                         cell.fill = fmt["fill"]
                         cell.border = fmt["border"]
                         cell.font = fmt["font"]
                         cell.alignment = fmt["alignment"]
-                        if col_name not in ("Time In", "Time Out", "Length", "End Date", "Broker Fees"):
+                        if col_name not in ("Time In", "Time Out", "Length", "End Date", "Broker Fees", "Gross Rate"):
                             cell.style = fmt["style"]
                             cell.number_format = fmt["number_format"]
 
@@ -378,20 +409,8 @@ class EtereBridge:
                                 f"Error formatting Air Date row {row_num}: value '{cell.value}' not parseable"
                             )
 
-            # 6) Format End Date as m/d/yy if present
-            if "End Date" in columns:
-                end_date_col = columns.index("End Date") + 1
-                for row_num in range(2, len(df) + 2):
-                    cell = sheet.cell(row=row_num, column=end_date_col)
-                    if cell.value and not isinstance(cell.value, str):
-                        dt = safe_convert_date(cell.value)
-                        if dt is not None:
-                            cell.value = dt
-                            cell.number_format = "m/d/yy"
-                        else:
-                            logging.warning(
-                                f"Error formatting End Date row {row_num}: value '{cell.value}' not parseable"
-                            )
+            # 6) The End Date section is now redundant as we handle it in the row loop above
+            # This is intentional to ensure every End Date cell is properly formatted
 
             # 7) Format Month if present
             if "Month" in columns:
@@ -423,7 +442,6 @@ class EtereBridge:
             logging.error(f"Error saving to Excel: {str(e)}")
             raise
 
-
     def _parse_time_24h(self, time_str: str) -> Optional[float]:
         """
         Converts 'time_str' (24-hour or 12-hour) into an Excel time serial (a float).
@@ -446,10 +464,17 @@ class EtereBridge:
     ) -> Dict:
         try:
             df["Air Date"] = df["Air Date"].apply(safe_convert_date)
-            gross_values = pd.to_numeric(
-                df["Gross Rate"].str.replace("$", "").str.replace(",", ""),
-                errors="coerce",
-            ).fillna(0)
+            
+            # Work with numeric Gross Rate values directly instead of string parsing
+            gross_values = df["Gross Rate"]
+            
+            # If values are still strings with $ (for robustness), convert them
+            if pd.api.types.is_string_dtype(gross_values):
+                gross_values = pd.to_numeric(
+                    gross_values.str.replace("$", "").str.replace(",", ""),
+                    errors="coerce",
+                ).fillna(0)
+                
             df["Day_of_Week"] = df["Air Date"].dt.day_name()
             spots_by_day = df["Day_of_Week"].value_counts().to_dict()
 
