@@ -144,7 +144,6 @@ def collect_user_inputs(config):
     inputs["affidavit"] = prompt_for_affidavit()
     return inputs
 
-
 def verify_languages(df: pd.DataFrame, language_info):
     """
     Display all unique descriptions with their detected languages and allow pattern-based corrections.
@@ -155,8 +154,8 @@ def verify_languages(df: pd.DataFrame, language_info):
     print("Language Detection Results".center(80))
     print("-" * 80)
     
-    # Show summary counts
-    for lang_code, count in detected_counts.items():
+    # Show summary counts - SORTED by language code
+    for lang_code, count in sorted(detected_counts.items()):
         print(f"   • {lang_code}: {count} entries")
     
     # Group by unique descriptions and show their detected languages
@@ -174,8 +173,9 @@ def verify_languages(df: pd.DataFrame, language_info):
     print(f"\nFound {len(unique_descriptions)} unique line descriptions:")
     print("-" * 80)
     
-    # Display all unique descriptions with their detected language
-    for i, (desc, info) in enumerate(unique_descriptions.items(), 1):
+    # Display all unique descriptions with their detected language, sorted by language code
+    sorted_descriptions = sorted(unique_descriptions.items(), key=lambda x: x[1]['language'])
+    for i, (desc, info) in enumerate(sorted_descriptions, 1):
         print(f"{i:2d}. [{info['language']}] {desc} ({info['count']} occurrences)")
     
     print("\nDoes this look correct? (Y/N)")
@@ -262,14 +262,13 @@ def verify_languages(df: pd.DataFrame, language_info):
                 else:
                     print("Invalid language code, skipping this pattern")
     
-    # Show summary of changes
+    # Show summary of changes - SORTED by language code
     print("\nUpdated language distribution:")
     updated_counts = row_languages.value_counts().to_dict()
     for lang_code, count in sorted(updated_counts.items()):
         print(f"   • {lang_code}: {count} entries")
     
     return row_languages
-
 
 def print_header(log_file):
     header = f"""
