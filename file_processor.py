@@ -334,7 +334,7 @@ class FileProcessor:
 
     def detect_languages(self, df: pd.DataFrame) -> Tuple[Dict[str, int], pd.Series]:
         """
-        Detect languages from the 'rowdescription' column with a scalable approach.
+        Detect languages from the 'rowdescription' column with a weighted approach.
         """
         languages = {}
         row_languages = pd.Series(index=df.index, dtype=str)
@@ -347,55 +347,58 @@ class FileProcessor:
         
         # Get program mappings from config
         program_language_map = self.config.program_language_map or {}
+        language_mapping = getattr(self.config, 'language_mapping', self.language_mapping)
+        default_language = getattr(language_mapping, 'default', 'E')
         
-        # Compile general language patterns
-        compiled_patterns = {}
-        for term, lang_code in {
-            r'\bviet\b': 'V', 
-            r'\bvietnamese\b': 'V',
-            r'\bchinese\b': 'M',
-            r'\bmandarin\b': 'M',
-            r'\bfilipino\b': 'T',
-            r'\btagalog\b': 'T',
-            r'\bhmong\b': 'Hm',
-            r'\bkorean\b': 'K',
-            r'\bjapanese\b': 'J',
-            r'\bsouth asian\b': 'SA',
-            r'\bgujarati\b': 'SA',
-            r'\bpunjabi\b': 'SA',
-        }.items():
-            compiled_patterns[re.compile(term, re.IGNORECASE)] = lang_code
+        # Pre-compile regex patterns for efficiency (only once)
+        if not hasattr(self, '_compiled_patterns'):
+            self._compiled_patterns = {}
+            for term, lang_code in {
+                r'\bviet\b': 'V', 
+                r'\bvietnamese\b': 'V',
+                r'\bchinese\b': 'M',
+                r'\bmandarin\b': 'M',
+                r'\bcantonese\b': 'C',
+                r'\bfilipino\b': 'T',
+                r'\btagalog\b': 'T',
+                r'\bhmong\b': 'Hm',
+                r'\bkorean\b': 'K',
+                r'\bjapanese\b': 'J',
+                r'\bsouth asian\b': 'SA',
+                r'\bhindi\b': 'SA',
+                r'\bpunjabi\b': 'SA',
+            }.items():
+                self._compiled_patterns[re.compile(term, re.IGNORECASE)] = lang_code
 
         for idx, description in df["rowdescription"].items():
             if not isinstance(description, str):
-                row_languages[idx] = self.default_language
+                row_languages[idx] = default_language
                 continue
-
-            # Default to English unless we find a match
-            detected_lang = self.default_language
+                
+            # Use weighted detection method
+            language_scores = {lang: 0 for lang in self.config.language_options}
+            language_scores[default_language] = 1  # Give default a small baseline score
             
-            # 1. Check for specific program names (from config)
-            for program, lang_code in program_language_map.items():
+            # 1. Program name exact match (highest weight)
+            for program, lang in program_language_map.items():
                 if program.lower() in description.lower():
-                    detected_lang = lang_code
-                    break
-                    
-            # 2. If not found, check for language keywords from original mapping
-            if detected_lang == self.default_language:
-                for keyword, code in self.language_mapping.items():
-                    if keyword.lower() in description.lower():
-                        detected_lang = code
-                        break
-                        
-            # 3. If still not found, check pattern matches
-            if detected_lang == self.default_language:
-                for pattern, code in compiled_patterns.items():
-                    if pattern.search(description):
-                        detected_lang = code
-                        break
-
-            row_languages[idx] = detected_lang
-            languages[detected_lang] = languages.get(detected_lang, 0) + 1
-
+                    language_scores[lang] = language_scores.get(lang, 0) + 10
+            
+            # 2. Language keyword match (medium weight)
+            for keyword, lang in language_mapping.items():
+                if keyword != 'default' and keyword.lower() in description.lower():
+                    language_scores[lang] = language_scores.get(lang, 0) + 5
+            
+            # 3. Pattern match (lower weight)
+            for pattern, lang in self._compiled_patterns.items():
+                if pattern.search(description):
+                    language_scores[lang] = language_scores.get(lang, 0) + 3
+            
+            # Get the language with the highest score
+            best_lang = max(language_scores.items(), key=lambda x: x[1])[0]
+            
+            row_languages[idx] = best_lang
+            languages[best_lang] = languages.get(best_lang, 0) + 1
+            
         logging.info(f"Detected languages: {languages}")
         return languages, row_languages
