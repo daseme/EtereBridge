@@ -152,7 +152,7 @@ class EtereBridge:
                     # Ensure it's treated as a number even if it came from elsewhere
                     if not isinstance(value, (int, float)):
                         value = float(str(value).replace("$", "").replace(",", ""))
-                    
+
                     if value == 0:
                         return "BNS"
                     else:
@@ -209,10 +209,7 @@ class EtereBridge:
             raise
 
     def save_to_excel(
-        self,
-        df: pd.DataFrame,
-        output_path: str,
-        agency_fee: Optional[float] = 0.15
+        self, df: pd.DataFrame, output_path: str, agency_fee: Optional[float] = 0.15
     ):
         """
         Write the final DataFrame 'df' to an Excel file, preserving formulas,
@@ -268,7 +265,7 @@ class EtereBridge:
             # Define all monetary columns that need consistent currency formatting
             monetary_columns = ["Gross Rate", "Spot Value", "Station Net"]
             monetary_column_indices = {}
-            
+
             # Find column indices
             if "Gross Rate" in columns:
                 gross_col_index = columns.index("Gross Rate") + 1
@@ -319,7 +316,7 @@ class EtereBridge:
                             cell.value = f"={air_date_letter}{row_num}"
                             cell.number_format = "m/d/yy"
                         else:
-                            # If we can't link to Air Date, use the value directly 
+                            # If we can't link to Air Date, use the value directly
                             # but still format it as a date
                             try:
                                 dt = safe_convert_date(cell_value)
@@ -335,9 +332,12 @@ class EtereBridge:
                                 cell.value = cell_value
 
                     # C) Check if there's a template formula for this column
-                    elif (
-                        col_num in template_formulas
-                        and col_name not in ("Time In", "Time Out", "Length", "End Date", "Broker Fees")
+                    elif col_num in template_formulas and col_name not in (
+                        "Time In",
+                        "Time Out",
+                        "Length",
+                        "End Date",
+                        "Broker Fees",
                     ):
                         formula = template_formulas[col_num]
                         cell.value = formula.replace("2", str(row_num))
@@ -347,7 +347,9 @@ class EtereBridge:
                         if agency_column_data is not None and gross_col_letter:
                             agency_flag_val = agency_column_data.iloc[row_num - 2]
                             if agency_flag_val == "Agency":
-                                cell.value = f"={gross_col_letter}{row_num}*{agency_fee}"
+                                cell.value = (
+                                    f"={gross_col_letter}{row_num}*{agency_fee}"
+                                )
                                 cell.number_format = currency_format
                             else:
                                 cell.value = None
@@ -368,28 +370,36 @@ class EtereBridge:
                                 f"Error converting Length at row {row_num}: {e}. Storing raw value."
                             )
                             cell.value = cell_value
-                            
+
                     # F) Format all monetary columns (Gross Rate, Spot Value, Station Net) as currency
                     elif col_name in monetary_columns:
                         # Convert any blank or dash to zero
-                        if pd.isna(cell_value) or cell_value == '-' or cell_value == '':
+                        if pd.isna(cell_value) or cell_value == "-" or cell_value == "":
                             cell.value = 0
                         # Handle string values with currency symbols
                         elif isinstance(cell_value, str):
                             try:
                                 # Extract numeric value, handling both "$0.00" and "-" formats
-                                if '$' in cell_value:
-                                    numeric_value = float(cell_value.replace('$', '').replace(',', ''))
+                                if "$" in cell_value:
+                                    numeric_value = float(
+                                        cell_value.replace("$", "").replace(",", "")
+                                    )
                                 else:
-                                    numeric_value = 0 if cell_value.strip() == '-' else float(cell_value.replace(',', ''))
+                                    numeric_value = (
+                                        0
+                                        if cell_value.strip() == "-"
+                                        else float(cell_value.replace(",", ""))
+                                    )
                                 cell.value = numeric_value
                             except (ValueError, TypeError):
                                 # If conversion fails, set to zero
                                 cell.value = 0
                         else:
                             # It's already a number
-                            cell.value = float(cell_value) if pd.notna(cell_value) else 0
-                        
+                            cell.value = (
+                                float(cell_value) if pd.notna(cell_value) else 0
+                            )
+
                         # Apply currency formatting consistently
                         cell.number_format = currency_format
                     else:
@@ -402,7 +412,12 @@ class EtereBridge:
                         cell.border = fmt["border"]
                         cell.font = fmt["font"]
                         cell.alignment = fmt["alignment"]
-                        if col_name not in ("Time In", "Time Out", "Length", "End Date") + tuple(monetary_columns):
+                        if col_name not in (
+                            "Time In",
+                            "Time Out",
+                            "Length",
+                            "End Date",
+                        ) + tuple(monetary_columns):
                             cell.style = fmt["style"]
                             cell.number_format = fmt["number_format"]
 
@@ -411,7 +426,7 @@ class EtereBridge:
             for col_name, col_idx in monetary_column_indices.items():
                 for row_num in range(2, len(df) + 2):
                     cell = sheet.cell(row=row_num, column=col_idx)
-                    if cell.value is None or cell.value == '':
+                    if cell.value is None or cell.value == "":
                         cell.value = 0
                     cell.number_format = currency_format
 
@@ -454,7 +469,9 @@ class EtereBridge:
 
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             workbook.save(output_path)
-            logging.info("Excel file saved successfully with in-cell formulas and original template formatting.")
+            logging.info(
+                "Excel file saved successfully with in-cell formulas and original template formatting."
+            )
 
         except Exception as e:
             logging.error(f"Error saving to Excel: {str(e)}")
@@ -482,17 +499,17 @@ class EtereBridge:
     ) -> Dict:
         try:
             df["Air Date"] = df["Air Date"].apply(safe_convert_date)
-            
+
             # Work with numeric Gross Rate values directly instead of string parsing
             gross_values = df["Gross Rate"]
-            
+
             # If values are still strings with $ (for robustness), convert them
             if pd.api.types.is_string_dtype(gross_values):
                 gross_values = pd.to_numeric(
                     gross_values.str.replace("$", "").str.replace(",", ""),
                     errors="coerce",
                 ).fillna(0)
-                
+
             df["Day_of_Week"] = df["Air Date"].dt.day_name()
             spots_by_day = df["Day_of_Week"].value_counts().to_dict()
 
@@ -665,7 +682,11 @@ class EtereBridge:
                     file_inputs["estimate"] = prompt_for_estimate()
                 else:
                     # If the batch shares user inputs, clone them; else prompt
-                    file_inputs = base_user_inputs.copy() if base_user_inputs else collect_user_inputs(self.config)
+                    file_inputs = (
+                        base_user_inputs.copy()
+                        if base_user_inputs
+                        else collect_user_inputs(self.config)
+                    )
 
                 # Now let process_file() handle all detection & transformations
                 result = self.process_file(file_path, file_inputs)

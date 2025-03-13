@@ -26,7 +26,9 @@ class AppConfig:
     sales_people: List[str]
     language_options: List[str]
     type_options: List[str]
-    program_language_map: Dict[str, str] = field(default_factory=dict)  # Add this new field
+    program_language_map: Dict[str, str] = field(
+        default_factory=dict
+    )  # Add this new field
 
 
 class ConfigurationError(Exception):

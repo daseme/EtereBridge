@@ -82,14 +82,16 @@ def apply_market_replacements(
     return df
 
 
-def transform_gross_rate(df: pd.DataFrame, safe_to_numeric_func: Callable[[any], float]) -> pd.DataFrame:
+def transform_gross_rate(
+    df: pd.DataFrame, safe_to_numeric_func: Callable[[any], float]
+) -> pd.DataFrame:
     """
     Clean and format the Gross Rate column by properly converting to numeric values.
-    
+
     Args:
         df (pd.DataFrame): DataFrame with Gross Rate column to transform
         safe_to_numeric_func (Callable): Function to safely convert values to numeric type
-        
+
     Returns:
         pd.DataFrame: DataFrame with transformed Gross Rate column
     """
@@ -99,11 +101,12 @@ def transform_gross_rate(df: pd.DataFrame, safe_to_numeric_func: Callable[[any],
         # Handle both string and numeric input by converting to string first
         df["Gross Rate"] = df["Gross Rate"].astype(str)
         # Remove currency symbols and thousands separators
-        df["Gross Rate"] = df["Gross Rate"].str.replace('$', '', regex=False)
-        df["Gross Rate"] = df["Gross Rate"].str.replace(',', '', regex=False)
+        df["Gross Rate"] = df["Gross Rate"].str.replace("$", "", regex=False)
+        df["Gross Rate"] = df["Gross Rate"].str.replace(",", "", regex=False)
         # Convert to numeric values for calculations (not strings)
-        df["Gross Rate"] = pd.to_numeric(df["Gross Rate"], errors='coerce').fillna(0)
+        df["Gross Rate"] = pd.to_numeric(df["Gross Rate"], errors="coerce").fillna(0)
     return df
+
 
 def transform_line_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Convert Line and '#' columns to integer."""
@@ -193,14 +196,16 @@ class FileProcessor:
         except (ValueError, TypeError) as e:
             logging.warning(f"Error rounding seconds '{seconds}': {e}")
             return 0
-        
-    def transform_length(self,
-    df: pd.DataFrame, round_func: Callable[[any], int]
-) -> pd.DataFrame:
+
+    def transform_length(
+        self, df: pd.DataFrame, round_func: Callable[[any], int]
+    ) -> pd.DataFrame:
         """Transform the Length column by rounding and formatting."""
         if "Length" in df.columns:
             df["Length"] = df["Length"].apply(round_func)
-            df["Length"] = df["Length"].apply(self.round_to_nearest_increment).astype(int)        
+            df["Length"] = (
+                df["Length"].apply(self.round_to_nearest_increment).astype(int)
+            )
         return df
 
     def safe_to_numeric(self, value):
@@ -335,25 +340,36 @@ class FileProcessor:
     def detect_languages(self, df: pd.DataFrame) -> Tuple[Dict[str, int], pd.Series]:
         """
         Detect languages from the 'rowdescription' column with a weighted approach.
+        Pre-compiles regex patterns once for performance and uses reliable mapping.
+        
+        Args:
+            df (pd.DataFrame): DataFrame containing rowdescription column
+            
+        Returns:
+            Tuple[Dict[str, int], pd.Series]: 
+                - Dictionary of language counts
+                - Series mapping row indices to detected language codes
         """
+        # Initialize return values
         languages = {}
         row_languages = pd.Series(index=df.index, dtype=str)
-
+        
+        # Check if required column exists
         if "rowdescription" not in df.columns:
             logging.warning("No 'rowdescription' column found, defaulting to English")
-            row_languages[:] = self.default_language
-            languages[self.default_language] = len(df)
+            default_lang = self.default_language
+            row_languages[:] = default_lang
+            languages[default_lang] = len(df)
             return languages, row_languages
         
         # Get program mappings from config
         program_language_map = self.config.program_language_map or {}
-        language_mapping = getattr(self.config, 'language_mapping', self.language_mapping)
-        default_language = getattr(language_mapping, 'default', 'E')
+        default_language = getattr(self, 'default_language', 'E')
         
-        # Pre-compile regex patterns for efficiency (only once)
+        # Compile regex patterns only once when the class is initialized
         if not hasattr(self, '_compiled_patterns'):
             self._compiled_patterns = {}
-            for term, lang_code in {
+            pattern_mappings = {
                 r'\bviet\b': 'V', 
                 r'\bvietnamese\b': 'V',
                 r'\bchinese\b': 'M',
@@ -367,38 +383,44 @@ class FileProcessor:
                 r'\bsouth asian\b': 'SA',
                 r'\bhindi\b': 'SA',
                 r'\bpunjabi\b': 'SA',
-            }.items():
+            }
+            for term, lang_code in pattern_mappings.items():
                 self._compiled_patterns[re.compile(term, re.IGNORECASE)] = lang_code
 
+        # Process each row for language detection
         for idx, description in df["rowdescription"].items():
+            # Handle non-string values
             if not isinstance(description, str):
                 row_languages[idx] = default_language
+                languages[default_language] = languages.get(default_language, 0) + 1
                 continue
                 
-            # Use weighted detection method
+            # Initialize language scores with default language having a small baseline
             language_scores = {lang: 0 for lang in self.config.language_options}
-            language_scores[default_language] = 1  # Give default a small baseline score
+            language_scores[default_language] = 1  # Default language gets a small baseline score
             
-            # 1. Program name exact match (highest weight)
+            # 1. Check exact program name matches (highest weight)
+            description_lower = description.lower()  # Convert once for all comparisons
             for program, lang in program_language_map.items():
-                if program.lower() in description.lower():
+                if program.lower() in description_lower:
                     language_scores[lang] = language_scores.get(lang, 0) + 10
             
-            # 2. Language keyword match (medium weight)
-            for keyword, lang in language_mapping.items():
-                if keyword != 'default' and keyword.lower() in description.lower():
+            # 2. Check language keyword matches (medium weight)
+            for keyword, lang in self.language_mapping.items():
+                if keyword.lower() in description_lower:
                     language_scores[lang] = language_scores.get(lang, 0) + 5
             
-            # 3. Pattern match (lower weight)
+            # 3. Check regex pattern matches (lower weight)
             for pattern, lang in self._compiled_patterns.items():
                 if pattern.search(description):
                     language_scores[lang] = language_scores.get(lang, 0) + 3
             
-            # Get the language with the highest score
-            best_lang = max(language_scores.items(), key=lambda x: x[1])[0]
+            # Determine the best language match
+            best_lang, _ = max(language_scores.items(), key=lambda x: x[1])
             
+            # Record the language for this row
             row_languages[idx] = best_lang
             languages[best_lang] = languages.get(best_lang, 0) + 1
-            
+        
         logging.info(f"Detected languages: {languages}")
         return languages, row_languages
