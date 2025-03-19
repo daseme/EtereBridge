@@ -160,18 +160,14 @@ class FileProcessor:
         Initialize the FileProcessor with configuration settings.
         """
         self.config = config
-        self.language_mapping = {
-            "Chinese": "M",
-            "Filipino": "T",
-            "Hmong": "Hm",
-            "South Asian": "SA",
-            "Vietnamese": "V",
-            "Mandarin": "M",
-            "Cantonese": "C",
-            "Korean": "K",
-            "Japanese": "J",
-        }
-        self.default_language = "E"  # Default to English
+        
+        # Use language mapping from config instead of hardcoding
+        self.language_mapping = {}
+        if hasattr(config, 'config') and 'LanguageMapping' in config.config:
+            self.language_mapping = dict(config.config['LanguageMapping'])
+        
+        # Get default language from config or use E as fallback
+        self.default_language = self.language_mapping.get('default', 'E')
 
     def clean_numeric(self, value):
         """

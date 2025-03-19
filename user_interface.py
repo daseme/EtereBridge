@@ -3,6 +3,7 @@ import sys
 import os
 import pandas as pd
 from typing import List, Optional
+from config_manager import config_manager
 
 
 def prompt_for_sales_person(config):
@@ -150,6 +151,8 @@ def verify_languages(df: pd.DataFrame, language_info):
     Display all unique descriptions with their detected languages and allow pattern-based corrections.
     Returns the corrected language Series.
     """
+    # Get language options from config
+    language_options = config_manager.get_config().language_options
     detected_counts, row_languages = language_info
     print("\n" + "-" * 80)
     print("Language Detection Results".center(80))
@@ -183,7 +186,7 @@ def verify_languages(df: pd.DataFrame, language_info):
 
     print("\nDoes this look correct? (Y/N)")
     if input().strip().lower() == "n":
-        print("\nAvailable language codes: E, M, T, Hm, SA, V, C, K, J")
+        print(f"\nAvailable language codes: {', '.join(config_manager.get_config().language_options)}")
         print("\nYou can correct languages in several ways:")
         print("1. Fix specific line descriptions")
         print("2. Pattern-based correction")
@@ -209,7 +212,7 @@ def verify_languages(df: pd.DataFrame, language_info):
 
                         # Get new language
                         new_lang = input("Enter new language code: ").strip().upper()
-                        if new_lang in ["E", "M", "T", "Hm", "SA", "V", "C", "K", "J"]:
+                        if new_lang in language_options:
                             # Update all matching rows
                             indices = unique_descriptions[desc]["indices"]
                             for idx in indices:
@@ -259,7 +262,7 @@ def verify_languages(df: pd.DataFrame, language_info):
 
                 # Get target language
                 new_lang = input("\nSet these to which language code? ").strip().upper()
-                if new_lang in ["E", "M", "T", "Hm", "SA", "V", "C", "K", "J"]:
+                if new_lang in language_options:
                     # Apply changes to all matching descriptions
                     total_updated = 0
                     for desc in matches:
