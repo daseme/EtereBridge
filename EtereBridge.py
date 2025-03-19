@@ -547,7 +547,7 @@ class EtereBridge:
                 agency_flag=user_inputs["agency_flag"],
                 sales_person=user_inputs["sales_person"],
                 agency_fee=user_inputs["agency_fee"],
-                language=language_dict,
+                language=user_inputs["language"],
                 affidavit=user_inputs["affidavit"],
                 estimate=user_inputs["estimate"],
                 contract=user_inputs["contract"],
