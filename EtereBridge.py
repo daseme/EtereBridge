@@ -90,21 +90,59 @@ class EtereBridge:
         }
 
     def extract_header_values(self, file_path: str) -> Tuple[str, str]:
-        """Extract header values from first section of CSV."""
+        """
+        Extract values for Bill Code generation from the new CSV format.
+        
+        From the example showing:
+        > [Textbox180,COD_CONTRATTO,COD_CONTRATTO2,Textbox172,Textbox181,Textbox171,Textbox182,Detail]
+        > Rod: Placcow Malin,RPM TVC 10596 SF,3/18/2025,Thunder Valley Casino Est 10596 SFO,"222 S. Morgan St, Ste 100",Thunder Valley Casino,Chicago,
+        
+        We need:
+        - First part: Value from the first column of line 2 (client/agency name)
+        - Second part: Value from the 6th column of line 2 (site/venue name)
+        """
         try:
-            with open(file_path, "r", encoding="utf-8") as file:
-                lines = file.readlines()[:2]
-                header_row = [x.strip() for x in lines[0].split(",")]
-                value_row = next(csv.reader([lines[1]]))
-                header_dict = dict(zip(header_row, value_row))
-                text_box_180 = header_dict.get("Textbox180", "").strip()
-                text_box_171 = header_dict.get("Textbox171", "").strip()
-                logging.info(
-                    f"Header values found - TextBox180: '{text_box_180}', TextBox171: '{text_box_171}'"
-                )
-                return text_box_180, text_box_171
+            logging.info(f"Extracting header values from: {file_path}")
+            
+            # Read the file line by line instead of reading the whole file at once
+            with open(file_path, 'r') as f:
+                # Skip the first line (column headers)
+                f.readline()
+                
+                # Read the second line which contains our data
+                second_line = f.readline().strip()
+                
+                if not second_line:
+                    logging.error("Could not find data line in file")
+                    return "", ""
+                    
+                logging.info(f"Processing line: {second_line}")
+                
+                # Use csv module to properly handle quoted fields
+                import csv
+                reader = csv.reader([second_line])
+                parts = next(reader)
+                
+                # Extract first part (client/agency) from first column
+                first_part = parts[0].strip() if len(parts) > 0 else ""
+                
+                # Extract second part (venue/site) from 6th column
+                second_part = parts[5].strip() if len(parts) > 5 else ""
+                
+                # If we have no second part, try to extract it from another column
+                # without assuming it contains "Casino"
+                if not second_part and len(parts) > 3:
+                    # Try column 4 which might contain a venue name
+                    potential_venue = parts[3].strip() if len(parts) > 3 else ""
+                    if potential_venue and "Est" not in potential_venue:  # Avoid the "Est" column
+                        second_part = potential_venue
+                
+                logging.info(f"Extracted first part: '{first_part}', second part: '{second_part}'")
+                return str(first_part), str(second_part)
+                
         except Exception as e:
-            logging.error(f"Error reading header: {e}")
+            logging.error(f"Error in extract_header_values: {e}")
+            logging.exception(e)
             return "", ""
 
     def apply_user_inputs(

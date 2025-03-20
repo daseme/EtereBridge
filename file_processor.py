@@ -59,14 +59,29 @@ def transform_month_column(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def generate_billcode(text_box_180: str, text_box_171: str) -> str:
-    """Generate bill code by combining two text boxes."""
-    if text_box_180 and text_box_171:
-        return f"{text_box_180}:{text_box_171}"
-    elif text_box_171:
-        return text_box_171
-    elif text_box_180:
-        return text_box_180
+def generate_billcode(first_part: str, second_part: str) -> str:
+    """
+    Generate bill code by combining two parts with a colon separator.
+    
+    The format is "first_part:second_part" when both parts exist.
+    If only one part exists, return just that part without a colon.
+    
+    Args:
+        first_part: The first part of the bill code (typically client/agency name)
+        second_part: The second part of the bill code (typically site/venue name)
+        
+    Returns:
+        Formatted bill code string
+    """
+    first_part = first_part.strip() if first_part else ""
+    second_part = second_part.strip() if second_part else ""
+    
+    if first_part and second_part:
+        return f"{first_part}:{second_part}"
+    elif first_part:
+        return first_part
+    elif second_part:
+        return second_part
     return ""
 
 
@@ -299,19 +314,21 @@ class FileProcessor:
             raise
 
     def apply_transformations(
-        self, df: pd.DataFrame, text_box_180: str, text_box_171: str
+        self, df: pd.DataFrame, first_part: str, second_part: str
     ) -> pd.DataFrame:
         """
         Apply data transformations by:
-         - Generating the bill code.
-         - Unifying Time In/Out formats.
-         - Applying market replacements.
-         - Transforming Gross Rate, Length, and line columns.
+        - Generating the bill code from the two extracted parts.
+        - Unifying Time In/Out formats.
+        - Applying market replacements.
+        - Transforming Gross Rate, Length, and line columns.
         """
         try:
-            # Bill code
-            billcode = generate_billcode(text_box_180, text_box_171)
+            # Generate Bill Code
+            from file_processor import generate_billcode  # Import the updated function
+            billcode = generate_billcode(first_part, second_part)
             df["Bill Code"] = billcode
+            logging.info(f"Generated Bill Code: {billcode}")
 
             # Unify Time In/Time Out to HH:MM:SS
             df = transform_times(df)

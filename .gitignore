@@ -19,6 +19,12 @@ config.ini
 # Pipenv files
 Pipfile.lock
 
+# Poetry files
+poetry.lock
+
+# UV files
+uv.lock
+
 # IDE specific files (optional, but recommended)
 .vscode/
 .idea/
