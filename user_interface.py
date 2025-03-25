@@ -204,17 +204,17 @@ def verify_languages(df: pd.DataFrame, language_info):
                         break
 
                     line_num = int(line_num)
-                    if 1 <= line_num <= len(unique_descriptions):
-                        # Get the description and current language
-                        desc = list(unique_descriptions.keys())[line_num - 1]
-                        current_lang = unique_descriptions[desc]["language"]
+                    if 1 <= line_num <= len(sorted_descriptions):
+                        # Get the description and current language from sorted list
+                        desc, info = sorted_descriptions[line_num - 1]
+                        current_lang = info["language"]
                         print(f"Current: [{current_lang}] {desc}")
 
                         # Get new language
                         new_lang = input("Enter new language code: ").strip().upper()
                         if new_lang in language_options:
                             # Update all matching rows
-                            indices = unique_descriptions[desc]["indices"]
+                            indices = info["indices"]
                             for idx in indices:
                                 row_languages.loc[idx] = new_lang
 
@@ -224,11 +224,14 @@ def verify_languages(df: pd.DataFrame, language_info):
                             print(
                                 f"Updated {count} occurrences of '{desc}' to {new_lang}"
                             )
+                            
+                            # Update the sorted list
+                            sorted_descriptions[line_num - 1] = (desc, unique_descriptions[desc])
                         else:
                             print("Invalid language code")
                     else:
                         print(
-                            f"Please enter a number between 1 and {len(unique_descriptions)}"
+                            f"Please enter a number between 1 and {len(sorted_descriptions)}"
                         )
                 except ValueError:
                     print("Invalid input. Please enter a number.")
@@ -277,6 +280,11 @@ def verify_languages(df: pd.DataFrame, language_info):
 
                     print(
                         f"Updated {total_updated} total occurrences across {len(matches)} descriptions"
+                    )
+                    
+                    # Re-sort descriptions after updates
+                    sorted_descriptions = sorted(
+                        unique_descriptions.items(), key=lambda x: x[1]["language"]
                     )
                 else:
                     print("Invalid language code, skipping this pattern")
