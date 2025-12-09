@@ -654,48 +654,65 @@ class EtereBridge:
             )
 
     def process_batch(self, files: List[str], show_progress: bool = True) -> dict:
+        """Enhanced batch processing with per-file field support."""
         successful = []
         failed = []
-
+    
         batch_settings = prompt_batch_settings(self.config)
         is_worldlink = batch_settings.get("is_worldlink", False)
-
-        # For non-worldlink, use shared inputs if available.
+    
+        # Get base inputs and per-file field configuration
         base_user_inputs = None
+        per_file_fields = batch_settings.get("per_file_fields", [])
+        
         if not is_worldlink:
             base_user_inputs = batch_settings.get("inputs") or None
-
+    
         files_iter = tqdm(files, desc="Processing files") if show_progress else files
-
+    
         for file_path in files_iter:
             try:
-                print(f"\nProcessing file: {os.path.basename(file_path)}")
-
-                # Build file-specific user inputs.
+                filename = os.path.basename(file_path)
+                print(f"\n📄 Processing file: {filename}")
+    
+                # Build file-specific user inputs
                 if is_worldlink:
                     file_inputs = self.get_worldlink_defaults()
-                    # Per-file prompts for contract, estimate
-                    file_inputs["contract"] = prompt_for_contract()
-                    file_inputs["estimate"] = prompt_for_estimate()
+                    # WorldLink always prompts for contract/estimate per file
+                    if "contract" in per_file_fields:
+                        file_inputs["contract"] = prompt_for_contract()
+                    if "estimate" in per_file_fields:
+                        file_inputs["estimate"] = prompt_for_estimate()
+                        
+                elif base_user_inputs is not None:
+                    # Start with shared inputs
+                    file_inputs = base_user_inputs.copy()
+                    
+                    # Prompt for any per-file fields
+                    if per_file_fields:
+                        print(f"   Additional details for {filename}:")
+                        for field in per_file_fields:
+                            if field == "contract":
+                                file_inputs["contract"] = prompt_for_contract()
+                            elif field == "estimate":
+                                file_inputs["estimate"] = prompt_for_estimate()
+                            # Add other per-file fields here if needed in the future
+                            
                 else:
-                    # If the batch shares user inputs, clone them; else prompt
-                    file_inputs = (
-                        base_user_inputs.copy()
-                        if base_user_inputs
-                        else collect_user_inputs(self.config)
-                    )
-
-                # Now let process_file() handle all detection & transformations
+                    # Collect all inputs individually for this file
+                    file_inputs = collect_user_inputs(self.config)
+    
+                # Process the file with its specific inputs
                 result = self.process_file(file_path, file_inputs)
-
+    
                 # Sort the result
                 if result.success:
                     successful.append(result)
                 else:
                     failed.append(result)
-
+    
                 self._save_interim_results(successful, failed)
-
+    
             except Exception as e:
                 logging.error(f"Error processing {file_path}: {str(e)}")
                 failed.append(
@@ -705,7 +722,7 @@ class EtereBridge:
                         error_message=str(e),
                     )
                 )
-
+    
         display_batch_summary(successful, failed, self.log_file)
         return {"successful": successful, "failed": failed}
 
