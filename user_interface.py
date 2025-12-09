@@ -405,9 +405,12 @@ def choose_input_file(files: List[str], input_dir: str) -> Optional[str]:
 
 def prompt_batch_settings(config) -> dict:
     """
-    Collects batch-specific settings from the user and returns a dictionary
-    of shared inputs for the batch. If the batch is for WorldLink orders, returns
-    the default settings.
+    Enhanced batch settings with contract/estimate per-file option.
+    
+    Returns a dictionary with batch configuration including:
+    - is_worldlink: bool
+    - inputs: shared inputs dict (if applicable)
+    - per_file_fields: list of fields to prompt per file
     """
     print("\n" + "-" * 80)
     print("Batch Processing Setup".center(80))
@@ -421,18 +424,47 @@ def prompt_batch_settings(config) -> dict:
 
     if is_worldlink:
         print("\nUsing WorldLink default settings...")
-        # Here we return an empty dict or a flag; the caller can then use get_worldlink_defaults.
+        print("📋 Contract and estimate numbers will be prompted for each file.")
         settings["use_defaults"] = True
+        settings["per_file_fields"] = ["contract", "estimate"]
     else:
-        shared_inputs = (
-            input("\nDo all files in this batch share the same user inputs? (Y/N): ")
-            .strip()
-            .lower()
-        )
-        if shared_inputs == "y":
-            print("\nCollecting shared user inputs for the batch...")
-            # Collect shared inputs using the existing collect_user_inputs function.
-            settings["inputs"] = collect_user_inputs(config)
-        else:
-            settings["inputs"] = None
+        print("\n🔧 Batch Input Strategy:")
+        print("   [1] All inputs shared across files (fastest)")
+        print("   [2] Most inputs shared, but contract/estimate per file (recommended)")
+        print("   [3] Collect all inputs separately for each file (most flexible)")
+        
+        while True:
+            choice = input("\nSelect strategy (1/2/3): ").strip()
+            
+            if choice == "1":
+                # Original "shared inputs" behavior
+                print("\nCollecting shared inputs for all files...")
+                settings["inputs"] = collect_user_inputs(config)
+                settings["per_file_fields"] = []
+                break
+                
+            elif choice == "2":
+                # NEW: Shared inputs but per-file contract/estimate
+                print("\nCollecting shared inputs (contract/estimate will be per-file)...")
+                shared_inputs = collect_user_inputs(config)
+                
+                # Remove contract/estimate from shared - we'll prompt per file
+                shared_inputs.pop("contract", None)
+                shared_inputs.pop("estimate", None)
+                
+                settings["inputs"] = shared_inputs
+                settings["per_file_fields"] = ["contract", "estimate"]
+                print("📋 Contract and estimate numbers will be prompted for each file.")
+                break
+                
+            elif choice == "3":
+                # Original "individual inputs" behavior
+                print("\nAll inputs will be collected separately for each file.")
+                settings["inputs"] = None
+                settings["per_file_fields"] = []
+                break
+                
+            else:
+                print("❌ Please enter 1, 2, or 3.")
+    
     return settings
