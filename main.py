@@ -28,6 +28,7 @@ from user_interface import (
     prompt_batch_settings,
     prompt_for_contract,
     prompt_for_estimate,
+    prompt_for_gross_up,
 )
 
 
@@ -576,6 +577,24 @@ class EtereBridge:
             if isinstance(primary_language, pd.Series):
                 primary_language = primary_language.to_dict()
             user_inputs["language"] = primary_language
+
+            # Gross-up: for agency orders, offer to replace rounded Etere rates
+            # with full-precision values computed from net rates.
+            if (
+                not user_inputs.get("is_worldlink", False)
+                and user_inputs.get("agency_flag") == "Agency"
+                and user_inputs.get("agency_fee")
+            ):
+                unique_rates = sorted(
+                    df.loc[df["Gross Rate"] > 0, "Gross Rate"].unique().tolist()
+                )
+                if unique_rates:
+                    rate_map = prompt_for_gross_up(unique_rates, user_inputs["agency_fee"])
+                    if rate_map:
+                        df["Gross Rate"] = df["Gross Rate"].apply(
+                            lambda r: rate_map.get(r, r)
+                        )
+                        logging.info(f"Gross-up applied: {rate_map}")
 
             logging.info("Applying user inputs...")
             df = self.apply_user_inputs(

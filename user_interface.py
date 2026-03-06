@@ -90,6 +90,32 @@ def prompt_for_order_type():
         print("Enter A, N, or T.")
 
 
+def prompt_for_gross_up(unique_rates: list, agency_fee: float) -> dict:
+    """
+    Ask if Etere rates need full-precision gross-up. If yes, prompt for the net
+    rate for each unique non-zero gross rate and return a mapping
+    {rounded_gross: full_precision_gross}. Returns empty dict if not a gross-up order.
+    """
+    answer = input("\nAre Etere rates gross-up (rounded)? (Y/N): ").strip().upper()
+    if answer != "Y":
+        return {}
+
+    rate_map = {}
+    print(f"\nEnter net rate for each unique gross (fee: {agency_fee * 100:.4g}%):")
+    for rate in unique_rates:
+        while True:
+            try:
+                net_str = input(f"  ${rate:.2f}  →  net: ").strip()
+                net = float(net_str)
+                gross_full = net / (1 - agency_fee)
+                print(f"            = ${gross_full}")
+                rate_map[rate] = gross_full
+                break
+            except ValueError:
+                print("    Enter a valid number.")
+    return rate_map
+
+
 def prompt_for_estimate():
     """Prompt user for estimate number (optional). Returns estimate as string (empty if not provided)."""
     return input(
