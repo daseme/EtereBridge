@@ -472,12 +472,15 @@ def prompt_batch_settings(config) -> dict:
             elif choice == "2":
                 # NEW: Shared inputs but per-file contract/estimate
                 print("\nCollecting shared inputs (contract/estimate will be per-file)...")
-                shared_inputs = collect_user_inputs(config)
-                
-                # Remove contract/estimate from shared - we'll prompt per file
-                shared_inputs.pop("contract", None)
-                shared_inputs.pop("estimate", None)
-                
+                shared_inputs = {}
+                shared_inputs["sales_person"] = prompt_for_sales_person(config)
+                shared_inputs["billing_type"] = prompt_for_billing_type()
+                shared_inputs["revenue_type"] = prompt_for_revenue_type()
+                order_type, agency_fee = prompt_for_order_type()
+                shared_inputs["agency_flag"] = order_type
+                shared_inputs["agency_fee"] = agency_fee
+                shared_inputs["affidavit"] = prompt_for_affidavit()
+
                 settings["inputs"] = shared_inputs
                 settings["per_file_fields"] = ["contract", "estimate"]
                 print("📋 Contract and estimate numbers will be prompted for each file.")
