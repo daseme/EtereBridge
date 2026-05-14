@@ -314,7 +314,8 @@ class FileProcessor:
             raise
 
     def apply_transformations(
-        self, df: pd.DataFrame, first_part: str, second_part: str
+        self, df: pd.DataFrame, first_part: str, second_part: str,
+        agency_flag: str = "Agency",
     ) -> pd.DataFrame:
         """
         Apply data transformations by:
@@ -325,8 +326,13 @@ class FileProcessor:
         """
         try:
             # Generate Bill Code
+            # Direct orders: bill code is client name only (second_part).
+            # Agency orders: "first_part:second_part" (contract desc + client name).
             from file_processor import generate_billcode  # Import the updated function
-            billcode = generate_billcode(first_part, second_part)
+            if agency_flag != "Agency":
+                billcode = generate_billcode(second_part, "")
+            else:
+                billcode = generate_billcode(first_part, second_part)
             df["Bill Code"] = billcode
             logging.info(f"Generated Bill Code: {billcode}")
 

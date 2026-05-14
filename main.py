@@ -553,7 +553,8 @@ class EtereBridge:
             logging.info(f"Detected language counts: {detected_counts}")
             logging.info("Applying transformations...")
             df = self.file_processor.apply_transformations(
-                df, text_box_180, text_box_171
+                df, text_box_180, text_box_171,
+                agency_flag=user_inputs.get("agency_flag", "Agency") if user_inputs else "Agency",
             )
 
             # Add standardization of monetary columns
